@@ -215,7 +215,7 @@
     }
 
     .icon-btn.syncing i{
-      animation:syncSpin .8s linear infinite;
+      animation:syncSpin 1.6s linear infinite;
       color:#1d4ed8;
     }
 
@@ -3020,30 +3020,8 @@
     const OSKAR_TRIAL_BOOT_DURATION_MS = 12 * 60 * 60 * 1000;
     const OSKAR_TRIAL_BOOT_STARTED_AT = Number(localStorage.getItem("oskar_trial_started_at_v1") || 0);
     const OSKAR_TRIAL_BOOT_ACTIVE = localStorage.getItem("oskar_storage_mode_v1") === "trial" && OSKAR_TRIAL_BOOT_STARTED_AT && (Date.now() - OSKAR_TRIAL_BOOT_STARTED_AT) < OSKAR_TRIAL_BOOT_DURATION_MS;
-
-    function hasFirebaseConfig(cfg) {
-      return !!(cfg && cfg.apiKey && cfg.projectId && cfg.appId && cfg.databaseURL);
-    }
-
-    const FIREBASE_CONFIG_READY = !OSKAR_TRIAL_BOOT_ACTIVE && hasFirebaseConfig(firebaseConfig);
-    let app = null;
-    let db = null;
-
-    if (FIREBASE_CONFIG_READY) {
-      try {
-        app = initializeApp(firebaseConfig);
-        db = getDatabase(app);
-      } catch (e) {
-        console.warn("Firebase init failed", e);
-        window.OSKAR_FIREBASE_INIT_ERROR = String(e?.message || e || "Firebase init failed");
-      }
-    } else if (!OSKAR_TRIAL_BOOT_ACTIVE) {
-      window.OSKAR_FIREBASE_INIT_ERROR = "firebase-config.js غير موجود أو بيانات Firebase ناقصة";
-      console.warn(window.OSKAR_FIREBASE_INIT_ERROR);
-    }
-
-    const firebaseReady = () => !!(db && ref && set && get && remove);
-    window.OSKAR_FIREBASE_READY = firebaseReady();
+    const app = OSKAR_TRIAL_BOOT_ACTIVE ? null : initializeApp(firebaseConfig);
+    const db = OSKAR_TRIAL_BOOT_ACTIVE ? null : getDatabase(app);
 
     const OSKAR_TRIAL_DURATION_MS = 12 * 60 * 60 * 1000;
     const OSKAR_TRIAL_USED_KEY = "oskar_trial_used_once_v1";
@@ -3091,7 +3069,7 @@
     window.OSKAR_TRIAL_FIREBASE_ALLOWED = !OSKAR_TRIAL_ACTIVE;
     const FALLBACK_ROOTS = OSKAR_TRIAL_ACTIVE ? [] : (Array.isArray(externalFirebase.fallbackRoots) ? externalFirebase.fallbackRoots : []);
     const DB_NAME = `cashier_units_pro_${DB_NAMESPACE}_db_v16`;
-    const DB_VERSION = 99;
+    const DB_VERSION = 120;
 
     const STORE_NAMES = [
       "products",
@@ -3122,8 +3100,6 @@
       { id: "purchases", label: "المشتريات", icon: "fa-truck-ramp-box" },
       { id: "supplierPayments", label: "دفعات التجار", icon: "fa-hand-holding-dollar" },
       { id: "expenses", label: "المصروفات", icon: "fa-money-bill-wave" },
-      { id: "shippingCalc", label: "حاسبة طرود الشحن", icon: "fa-calculator" },
-      { id: "shippingShipments", label: "الشحنات", icon: "fa-boxes-packing" },
       { id: "reports", label: "التقارير", icon: "fa-chart-line" },
       { id: "settings", label: "الإعدادات", icon: "fa-gear" }
     ];
@@ -3336,8 +3312,6 @@
       return Array.isArray(user.permissions) && user.permissions.includes(pageId);
     }
 
-    window.oskarHasPermission = hasPermission;
-
     function saveAuthSession(user) {
       localStorage.setItem(AUTH_SESSION_KEY, JSON.stringify({
         id: user.id,
@@ -3396,7 +3370,7 @@
     }
 
     async function fetchFreshSettingsFromFirebase() {
-      if (!navigator.onLine || !firebaseReady()) return state.settings || defaultSettings;
+      if (!navigator.onLine) return state.settings || defaultSettings;
       try {
         const snap = await get(ref(db, `${FIREBASE_ROOT}/settings/main`));
         if (snap.exists()) {
@@ -3424,7 +3398,7 @@
       const cleanSettings = stripLocalOnlySettings(settings);
       await idbPut("settings", settings);
       if (OSKAR_TRIAL_LOCAL_ONLY) return;
-      if (navigator.onLine && firebaseReady()) {
+      if (navigator.onLine) {
         await set(ref(db, `${FIREBASE_ROOT}/settings/main`), cleanSettings);
       } else {
         await enqueueSync({ type: "set", store: "settings", itemId: "main", data: cleanSettings });
@@ -3551,8 +3525,8 @@
         }
       }
 
-      document.querySelectorAll(".nav-btn[data-page], .bottom-btn[data-page], .nav-btn[data-ship-page], .bottom-btn[data-ship-page]").forEach(btn => {
-        const page = btn.dataset.page || btn.dataset.shipPage;
+      document.querySelectorAll(".nav-btn[data-page], .bottom-btn[data-page]").forEach(btn => {
+        const page = btn.dataset.page;
         btn.classList.toggle("auth-hidden", !!user && !hasPermission(page));
       });
 
@@ -3561,16 +3535,7 @@
 
       if (user && !hasPermission(getActivePage())) {
         const first = AUTH_PAGES.find(p => hasPermission(p.id));
-        if (first) {
-          if (String(first.id).startsWith("shipping")) {
-            setTimeout(() => {
-              if (typeof window.oskarShipSwitchPage === "function") window.oskarShipSwitchPage(first.id);
-              else document.querySelector(`[data-ship-page="${first.id}"]`)?.click();
-            }, 120);
-          } else {
-            switchPage(first.id);
-          }
-        }
+        if (first) switchPage(first.id);
       }
     }
 
@@ -3975,49 +3940,60 @@
       });
     }
 
+    function ensureDbStores(database) {
+      STORE_NAMES.forEach((name) => {
+        if (!database.objectStoreNames.contains(name)) {
+          database.createObjectStore(name, { keyPath: "id" });
+        }
+      });
+    }
+
+    function openIndexedDbWithVersion(version, resolve, reject, retryDepth = 0) {
+      const safeVersion = Math.max(Number(version || DB_VERSION) || DB_VERSION, DB_VERSION);
+      const req = indexedDB.open(DB_NAME, safeVersion);
+
+      req.onupgradeneeded = () => {
+        ensureDbStores(req.result);
+      };
+
+      req.onsuccess = () => {
+        const database = req.result;
+        const missingStores = STORE_NAMES.some((name) => !database.objectStoreNames.contains(name));
+
+        if (missingStores && retryDepth < 3) {
+          const nextVersion = Math.max(Number(database.version || safeVersion) + 1, safeVersion + 1);
+          database.close();
+          openIndexedDbWithVersion(nextVersion, resolve, reject, retryDepth + 1);
+          return;
+        }
+
+        resolve(database);
+      };
+
+      req.onerror = () => {
+        const err = req.error;
+        const isVersionError = err && (err.name === "VersionError" || String(err.message || "").includes("less than the existing version"));
+
+        if (isVersionError && retryDepth < 3) {
+          const probe = indexedDB.open(DB_NAME);
+
+          probe.onsuccess = () => {
+            const currentVersion = Number(probe.result?.version || DB_VERSION) || DB_VERSION;
+            try { probe.result.close(); } catch {}
+            openIndexedDbWithVersion(Math.max(currentVersion, DB_VERSION), resolve, reject, retryDepth + 1);
+          };
+
+          probe.onerror = () => reject(err || probe.error);
+          return;
+        }
+
+        reject(err);
+      };
+    }
+
     function openDB() {
       return new Promise((resolve, reject) => {
-        const applyStores = (database) => {
-          STORE_NAMES.forEach((name) => {
-            if (!database.objectStoreNames.contains(name)) {
-              database.createObjectStore(name, { keyPath: "id" });
-            }
-          });
-        };
-
-        const startOpen = (version, allowRetry) => {
-          let req;
-          try {
-            req = indexedDB.open(DB_NAME, version);
-          } catch (e) {
-            reject(e);
-            return;
-          }
-
-          req.onupgradeneeded = () => applyStores(req.result);
-          req.onsuccess = () => resolve(req.result);
-          req.onblocked = () => console.warn("IndexedDB upgrade is blocked by another open tab");
-          req.onerror = () => {
-            const err = req.error;
-            if (allowRetry && err && err.name === "VersionError") {
-              try {
-                const currentReq = indexedDB.open(DB_NAME);
-                currentReq.onsuccess = () => {
-                  const currentVersion = Number(currentReq.result?.version || version || DB_VERSION);
-                  try { currentReq.result.close(); } catch (_) {}
-                  startOpen(Math.max(currentVersion, DB_VERSION), false);
-                };
-                currentReq.onerror = () => reject(err || currentReq.error);
-              } catch (_) {
-                reject(err);
-              }
-              return;
-            }
-            reject(err);
-          };
-        };
-
-        startOpen(DB_VERSION, true);
+        openIndexedDbWithVersion(DB_VERSION, resolve, reject);
       });
     }
 
@@ -4187,15 +4163,23 @@
       }
     }
 
-    async function saveLocal(store, item, sync = true) {
-      await idbPut(store, item);
+    async function saveLocal(store, item, sync = true, syncMeta = {}) {
+      if (!item || !item.id) return;
+
+      const localItem = {
+        ...item,
+        updatedAt: Math.max(Number(item.updatedAt || item.createdAt || 0), Date.now())
+      };
+
+      await idbPut(store, localItem);
 
       if (sync) {
         await enqueueSync({
           type: "set",
           store,
-          itemId: item.id,
-          data: item
+          itemId: localItem.id,
+          data: localItem,
+          syncMeta: syncMeta || {}
         });
       }
     }
@@ -4318,7 +4302,7 @@
 
     async function loadFirebaseRoot(rootName) {
       if (OSKAR_TRIAL_LOCAL_ONLY) return 0;
-      if (!navigator.onLine || !firebaseReady()) return 0;
+      if (!navigator.onLine) return 0;
 
       try {
         updateSyncUi({
@@ -4381,7 +4365,7 @@
 
     async function loadFirebaseOnce() {
       if (OSKAR_TRIAL_LOCAL_ONLY) return;
-      if (!navigator.onLine || !firebaseReady()) return;
+      if (!navigator.onLine) return;
 
       updateSyncUi({
         visible: state.syncUi.visible,
@@ -4405,7 +4389,7 @@
 
     async function syncLocalSnapshotToFirebase() {
       if (OSKAR_TRIAL_LOCAL_ONLY) return;
-      if (!navigator.onLine || !firebaseReady()) return;
+      if (!navigator.onLine) return;
 
       const meta = await idbGet("localMeta", "snapshotUploaded");
       if (meta?.root === FIREBASE_ROOT && meta?.done) return;
@@ -4811,7 +4795,6 @@
     }
 
     async function oskarCfFetchRemoteStore(store) {
-      if (!firebaseReady()) return new Map();
       const snap = await get(ref(db, FIREBASE_ROOT + "/" + store));
       return oskarCfObjToMap(snap.exists() ? (snap.val() || {}) : {});
     }
@@ -4854,8 +4837,10 @@
       const touchedStores = new Set();
       const removals = [];
       const latestProductLocal = new Map();
+      const latestProductLocalMeta = new Map();
       const removedProducts = new Set();
       const stockDelta = new Map();
+      const absoluteStockProductIds = new Set();
 
       const sortedQueue = queue.slice().sort((a, b) => Number(a.createdAt || 0) - Number(b.createdAt || 0));
 
@@ -4886,6 +4871,7 @@
 
         if (store === "products") {
           latestProductLocal.set(itemId, data);
+          latestProductLocalMeta.set(itemId, q.syncMeta || q.meta || {});
           touchedStores.add("products");
           continue;
         }
@@ -4929,17 +4915,34 @@
           delete maps.products[productId];
           return;
         }
+
         const remoteProduct = maps.products?.[productId];
+        const meta = latestProductLocalMeta.get(productId) || {};
+        const forceAbsoluteStock = meta.stockMode === "absolute" || meta.absoluteStock === true;
+        if (forceAbsoluteStock) absoluteStockProductIds.add(productId);
+        const hasInvoiceOrPurchaseDelta = stockDelta.has(productId);
+
         if (initialRemoteProductIds.has(productId) && remoteProduct) {
-          const cloudStock = cleanNumber(remoteProduct.stock || 0);
-          maps.products[productId] = normalizeProduct({ ...remoteProduct, ...localProduct, stock: cloudStock, updatedAt: Math.max(oskarCfItemTime(remoteProduct), oskarCfItemTime(localProduct), Date.now()) });
+          const merged = normalizeProduct({
+            ...remoteProduct,
+            ...localProduct,
+            updatedAt: Math.max(oskarCfItemTime(remoteProduct), oskarCfItemTime(localProduct), Date.now())
+          });
+
+          if (hasInvoiceOrPurchaseDelta && !forceAbsoluteStock) {
+            merged.stock = cleanNumber(remoteProduct.stock || 0);
+          } else {
+            merged.stock = cleanNumber(localProduct.stock || 0);
+          }
+
+          maps.products[productId] = normalizeProduct(merged);
         } else {
           maps.products[productId] = normalizeProduct(localProduct);
         }
       });
 
       stockDelta.forEach((delta, productId) => {
-        if (!maps.products || !maps.products[productId] || removedProducts.has(productId)) return;
+        if (!maps.products || !maps.products[productId] || removedProducts.has(productId) || absoluteStockProductIds.has(productId)) return;
         if (initialRemoteProductIds.has(productId)) {
           maps.products[productId] = normalizeProduct({
             ...maps.products[productId],
@@ -6579,7 +6582,7 @@
           ex.category = $("productCategory").value.trim() || ex.category;
           ex.updatedAt = Date.now();
 
-          await saveLocal("products", ex, true);
+          await saveLocal("products", ex, true, { stockMode: "absolute", reason: "manual-product-merge" });
           state.products = state.products.map(p => p.id === ex.id ? ex : p);
 
           closeModal();
@@ -6609,7 +6612,7 @@
           updatedAt: Date.now()
         });
 
-        await saveLocal("products", product, true);
+        await saveLocal("products", product, true, { stockMode: "absolute", reason: "manual-product-form" });
 
         const i = state.products.findIndex(p => p.id === id);
         if (i >= 0) state.products[i] = product;
@@ -10766,18 +10769,7 @@
 
       renderAll();
 
-      window.OSKAR_FIREBASE_READY = firebaseReady();
-      if (!OSKAR_TRIAL_LOCAL_ONLY && !firebaseReady() && window.OSKAR_FIREBASE_INIT_ERROR) {
-        updateSyncUi({
-          spin: false,
-          visible: true,
-          title: "تنبيه Firebase",
-          status: "تم تشغيل التطبيق محليًا، لكن ملف firebase-config.js غير موجود أو ناقص لذلك لن تتم المزامنة حتى تضيفه بجانب ملف HTML.",
-          progress: 0
-        });
-      }
-
-      if (currentUser() && navigator.onLine && !OSKAR_TRIAL_LOCAL_ONLY && firebaseReady()) {
+      if (currentUser() && navigator.onLine && !OSKAR_TRIAL_LOCAL_ONLY) {
         await runAfterLoginSync("boot");
       } else {
         updateSyncUi({
@@ -11764,8 +11756,6 @@
     { id:"purchases", label:"المشتريات", icon:"fa-truck-ramp-box" },
     { id:"supplierPayments", label:"دفعات التجار", icon:"fa-hand-holding-dollar" },
     { id:"expenses", label:"المصروفات", icon:"fa-money-bill-wave" },
-    { id:"shippingCalc", label:"حاسبة طرود الشحن", icon:"fa-calculator" },
-    { id:"shippingShipments", label:"الشحنات", icon:"fa-boxes-packing" },
     { id:"reports", label:"التقارير", icon:"fa-chart-line" },
     { id:"settings", label:"الإعدادات", icon:"fa-gear" }
   ];
@@ -14203,9 +14193,10 @@
     .oskar-prime-method-card,
     .oskar-prime-method{grid-template-columns:74px minmax(0,1fr)!important;padding:14px!important}
   }
-  .icon-btn.syncing i,
+  #syncNowBtn.syncing i,
+  .icon-btn.syncing i{animation-duration:1.6s!important}
   .fa-spin,
-  .oskar-prime-safe-spinner{animation-duration:.36s!important}
+  .oskar-prime-safe-spinner{animation-duration:.70s!important}
   .oskar-prime-safe-select.best:before,
   .oskar-prime-select-card.best:before,
   .oskar-prime-plan.best:before,
@@ -14409,7 +14400,8 @@
   }
   function speedSpinners(){
     $$('.fa-spin,.icon-btn.syncing i,.oskar-prime-safe-spinner').forEach(el => {
-      el.style.setProperty('animation-duration', '.36s', 'important');
+      if(el.closest && el.closest('#syncNowBtn')) el.style.setProperty('animation-duration', '1.6s', 'important');
+      else el.style.setProperty('animation-duration', '.70s', 'important');
     });
   }
   function updateTrialText(){
@@ -14508,10 +14500,11 @@
     animation:oskarFastSpin .32s linear infinite;
     margin-inline-start:6px;
   }
-  .icon-btn.syncing i,
+  #syncNowBtn.syncing i,
+  .icon-btn.syncing i{animation-duration:1.6s!important}
   .fa-spin,
   .oskar-prime-safe-spinner,
-  .oskar-mini-loader{animation-duration:.28s!important}
+  .oskar-mini-loader{animation-duration:.70s!important}
   @keyframes oskarFastSpin{to{transform:rotate(360deg)}}
 </style>
 <script id="oskarFastInvoiceExportTrialSyncLockScript20260501B">
@@ -15609,1208 +15602,24 @@
 </script>
 
 
-
-<script id="oskar-shipping-cbm-final-2026-05-02-fixed-v2">
+<!-- OSKAR_SYNC_STOCK_FIX_2026_05_02 -->
+<style id="oskar-sync-stock-fix-2026-05-02-style">
+  #syncNowBtn.syncing i,
+  .icon-btn.syncing i{animation-duration:1.6s!important}
+</style>
+<script id="oskar-sync-stock-fix-2026-05-02-script">
 (function(){
   "use strict";
-
-  const PATCH_VERSION = "2026-05-03-shipping-cbm-v4-reports-permissions-folders";
-  const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
-  const $ = (id) => document.getElementById(id);
-  const $$ = (sel, root=document) => Array.from(root.querySelectorAll(sel));
-
-  function st(){
-    window.state = window.state || {};
-    if (!Array.isArray(window.state.shipments)) window.state.shipments = [];
-    return window.state;
-  }
-
-  function uid(prefix="ship"){
-    return `${prefix}_${Date.now()}_${Math.random().toString(16).slice(2)}`;
-  }
-
-  function esc(v){
-    return String(v ?? "").replace(/[&<>"']/g, m => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#039;"}[m]));
-  }
-
-  function num(v, fallback=0){
-    const n = Number(String(v ?? "").trim().replace(",", "."));
-    return Number.isFinite(n) ? n : fallback;
-  }
-
-  function r3(v){
-    return Math.round((num(v) + Number.EPSILON) * 1000) / 1000;
-  }
-
-  function currency(){
-    return window.state?.settings?.currency || "₪";
-  }
-
-  function money(v){
-    const n = num(v);
-    return `${currency()} ${n.toFixed(2)}`;
-  }
-
-  function fmt(v, d=3){
-    return num(v).toFixed(d);
-  }
-
-  function toast(msg, ms=2600){
-    if (typeof window.toast === "function") return window.toast(msg, ms);
-    const el = $("toast");
-    if (!el) return alert(msg);
-    el.textContent = msg;
-    el.classList.add("show");
-    clearTimeout(el._shipTimer);
-    el._shipTimer = setTimeout(() => el.classList.remove("show"), ms);
-  }
-
-  function formatDate(ts){
-    try{
-      return new Date(Number(ts || Date.now())).toLocaleString("ar", {year:"numeric", month:"2-digit", day:"2-digit", hour:"2-digit", minute:"2-digit"});
-    }catch{ return "-"; }
-  }
-
-  function dateKey(ts){
-    const d = new Date(Number(ts || Date.now()));
-    const y = d.getFullYear();
-    const m = String(d.getMonth()+1).padStart(2,"0");
-    const day = String(d.getDate()).padStart(2,"0");
-    return `${y}-${m}-${day}`;
-  }
-
-  function startOfDay(d=new Date()){
-    const x = new Date(d);
-    x.setHours(0,0,0,0);
-    return x.getTime();
-  }
-
-  function storageKey(){
-    const root = String(window.FIREBASE_ROOT || window.OSKAR_STORAGE_PROFILE || "main").replace(/[^a-zA-Z0-9_\-]/g, "_");
-    return `oskar_shipping_cbm_${root}_v1`;
-  }
-
-  function saveLocalShipments(){
-    try{ localStorage.setItem(storageKey(), JSON.stringify(st().shipments || [])); }catch(e){ console.warn("shipping local save", e); }
-  }
-
-  function loadLocalShipments(){
-    try{
-      const rows = JSON.parse(localStorage.getItem(storageKey()) || "[]");
-      if (Array.isArray(rows)) st().shipments = rows.map(normalizeShipment).filter(Boolean);
-    }catch(e){ st().shipments = []; }
-  }
-
-  function calcLine(line){
-    const qty = Math.max(1, Math.round(num(line.qty, 1)));
-    const length = Math.max(0, num(line.length, 0));
-    const width = Math.max(0, num(line.width, 0));
-    const height = Math.max(0, num(line.height, 0));
-    const unitCbm = (length * width * height) / 1000000;
-    const totalCbm = unitCbm * qty;
-    return { qty, length, width, height, unitCbm: r3(unitCbm), totalCbm: r3(totalCbm) };
-  }
-
-  function calcShipment(cartons, cbmPrice){
-    const lines = (Array.isArray(cartons) ? cartons : []).map(calcLine);
-    const totalCartons = lines.reduce((s, l) => s + l.qty, 0);
-    const totalCbm = r3(lines.reduce((s, l) => s + l.totalCbm, 0));
-    const price = Math.max(0, num(cbmPrice, 0));
-    const total = r3(totalCbm * price);
-    return { lines, totalCartons, totalCbm, cbmPrice: price, total };
-  }
-
-  function normalizeShipment(raw){
-    if (!raw || !raw.id) return null;
-    const cartons = Array.isArray(raw.cartons) ? raw.cartons : [];
-    const calc = calcShipment(cartons, raw.cbmPrice);
-    const paid = Math.max(0, num(raw.paidAmount ?? raw.downPayment, 0));
-    const total = num(raw.totalPrice ?? calc.total, calc.total);
-    const remaining = Math.max(0, r3(total - paid));
-    return {
-      id: raw.id,
-      code: String(raw.code || "").trim(),
-      customerName: String(raw.customerName || raw.customer || "").trim(),
-      cartons: cartons.map((c, i) => ({
-        id: c.id || uid("carton"),
-        length: num(c.length, 0),
-        width: num(c.width, 0),
-        height: num(c.height, 0),
-        qty: Math.max(1, Math.round(num(c.qty, 1))),
-        notes: String(c.notes || ""),
-        index: i + 1
-      })),
-      totalCartons: calc.totalCartons,
-      totalCbm: calc.totalCbm,
-      cbmPrice: calc.cbmPrice,
-      totalPrice: total,
-      paymentMethod: raw.paymentMethod || "later",
-      paymentAccountId: raw.paymentAccountId || "",
-      paymentAccountName: raw.paymentAccountName || "",
-      partialPaymentMethod: raw.partialPaymentMethod || raw.downPaymentMethod || "",
-      partialPaymentAccountId: raw.partialPaymentAccountId || raw.downPaymentAccountId || "",
-      partialPaymentAccountName: raw.partialPaymentAccountName || raw.downPaymentAccountName || "",
-      paidAmount: paid,
-      remaining,
-      paymentStatus: remaining <= 0 ? "paid" : (paid > 0 ? "partial" : "later"),
-      notes: String(raw.notes || ""),
-      createdAt: Number(raw.createdAt || Date.now()),
-      updatedAt: Number(raw.updatedAt || raw.createdAt || Date.now()),
-      syncPending: !!raw.syncPending
-    };
-  }
-
-  async function saveRemoteShipment(ship){
-    if (window.OSKAR_TRIAL_LOCAL_ONLY) return false;
-    if (!navigator.onLine || !window.db || !window.ref || !window.set || !window.FIREBASE_ROOT) return false;
-    try{
-      const clean = { ...ship, syncPending:false };
-      await window.set(window.ref(window.db, `${window.FIREBASE_ROOT}/shipments/${ship.id}`), clean);
-      const i = st().shipments.findIndex(x => x.id === ship.id);
-      if (i >= 0) st().shipments[i] = clean;
-      saveLocalShipments();
-      return true;
-    }catch(e){
-      console.warn("shipping remote save failed", e);
-      return false;
-    }
-  }
-
-  async function deleteRemoteShipment(id){
-    if (window.OSKAR_TRIAL_LOCAL_ONLY) return false;
-    if (!navigator.onLine || !window.db || !window.ref || !window.remove || !window.FIREBASE_ROOT) return false;
-    try{
-      await window.remove(window.ref(window.db, `${window.FIREBASE_ROOT}/shipments/${id}`));
-      return true;
-    }catch(e){ console.warn("shipping remote delete failed", e); return false; }
-  }
-
-  async function loadRemoteShipments(){
-    if (window.OSKAR_TRIAL_LOCAL_ONLY) return;
-    if (!navigator.onLine || !window.db || !window.ref || !window.get || !window.FIREBASE_ROOT) return;
-    try{
-      const snap = await window.get(window.ref(window.db, `${window.FIREBASE_ROOT}/shipments`));
-      if (!snap || !snap.exists || !snap.exists()) return;
-      const remoteRows = Object.values(snap.val() || {}).map(normalizeShipment).filter(Boolean);
-      const map = new Map((st().shipments || []).map(x => [x.id, x]));
-      remoteRows.forEach(r => {
-        const old = map.get(r.id);
-        if (!old || Number(r.updatedAt || 0) >= Number(old.updatedAt || 0)) map.set(r.id, r);
-      });
-      st().shipments = Array.from(map.values()).sort((a,b) => Number(b.createdAt)-Number(a.createdAt));
-      saveLocalShipments();
-      renderShipmentsPage();
-    }catch(e){ console.warn("shipping remote load", e); }
-  }
-
-  async function syncPendingShipments(){
-    const rows = (st().shipments || []).filter(x => x.syncPending);
-    if (!rows.length) return;
-    for (const row of rows) await saveRemoteShipment(row);
-    renderShipmentsPage();
-  }
-
-  function accountOptions(selected=""){
-    const accounts = Array.isArray(window.state?.paymentAccounts) ? window.state.paymentAccounts : [];
-    const real = accounts.filter(a => a && a.id !== "cash");
-    if (!real.length) return `<option value="">تحويل بنكي / تطبيق</option>`;
-    return real.map(a => `<option value="${esc(a.id)}" ${String(selected)===String(a.id)?"selected":""}>${esc(a.name || "حساب")} ${a.number ? " - " + esc(a.number) : ""}</option>`).join("");
-  }
-
-  function shipPaymentLabel(shipOrMethod){
-    const s = typeof shipOrMethod === "object" ? shipOrMethod : { paymentMethod: shipOrMethod };
-    const method = s.paymentMethod || "later";
-    if (method === "cash") return "دفع كاش";
-    if (method === "bank") return s.paymentAccountName ? `تحويل بنكي / ${s.paymentAccountName}` : "تحويل بنكي / تطبيق";
-    if (method === "later"){
-      const paid = num(s.paidAmount, 0);
-      if (paid > 0){
-        const pm = s.partialPaymentMethod || "cash";
-        const txt = pm === "bank" ? (s.partialPaymentAccountName ? `تحويل ${s.partialPaymentAccountName}` : "تحويل بنكي") : "كاش";
-        return `دفع لاحق + دفعة ${txt}`;
-      }
-      return "دفع لاحق";
-    }
-    return method;
-  }
-
-  function shipPaymentShortLabel(shipOrMethod){
-    const s = typeof shipOrMethod === "object" ? shipOrMethod : { paymentMethod: shipOrMethod };
-    if (s.paymentMethod === "cash") return "كاش";
-    if (s.paymentMethod === "bank") return "تحويل";
-    return "دفع لاحق";
-  }
-
-  const draft = {
-    editingId: "",
-    cartons: [{ id: uid("carton"), length:"", width:"", height:"", qty:1 }]
-  };
-
-  let activeShipFolder = "all";
-
-  function shippingHasPermission(pageId){
-    const user = window.state?.auth?.user;
-    if (!user) return false;
-    if (user.role === "admin" || (user.permissions || []).includes("__admin__")) return true;
-    return Array.isArray(user.permissions) && user.permissions.includes(pageId);
-  }
-
-  function applyShippingPermissionsUI(){
-    const user = window.state?.auth?.user;
-    $$('[data-ship-page]').forEach(btn => {
-      const page = btn.dataset.shipPage;
-      btn.classList.toggle("auth-hidden", !!user && !shippingHasPermission(page));
-    });
-  }
-
-  function customerMapKey(){
-    return `${storageKey()}_customers_by_code`;
-  }
-
-  function readShipCustomerMap(){
-    try{
-      const map = JSON.parse(localStorage.getItem(customerMapKey()) || "{}");
-      return map && typeof map === "object" ? map : {};
-    }catch{ return {}; }
-  }
-
-  function saveShipCustomerMap(map){
-    try{ localStorage.setItem(customerMapKey(), JSON.stringify(map || {})); }catch(e){ console.warn("shipping customer map save", e); }
-  }
-
-  function rememberShipCustomer(code, name){
-    const c = String(code || "").trim();
-    const n = String(name || "").trim();
-    if (!c || !n) return;
-    const map = readShipCustomerMap();
-    map[c] = { name:n, updatedAt:Date.now() };
-    saveShipCustomerMap(map);
-  }
-
-  function findShipCustomerByCode(code){
-    const c = String(code || "").trim();
-    if (!c) return "";
-    const rows = (st().shipments || [])
-      .filter(s => String(s.code || "").trim() === c && String(s.customerName || "").trim())
-      .sort((a,b) => Number(b.updatedAt || b.createdAt || 0) - Number(a.updatedAt || a.createdAt || 0));
-    if (rows[0]) return String(rows[0].customerName || "").trim();
-    const saved = readShipCustomerMap()[c];
-    return saved?.name || "";
-  }
-
-  function autoFillShipCustomer(force=false){
-    const codeInput = $("shipCode");
-    const customerInput = $("shipCustomer");
-    if (!codeInput || !customerInput) return;
-    if (!force && String(customerInput.value || "").trim()) return;
-    const name = findShipCustomerByCode(codeInput.value);
-    if (name) {
-      customerInput.value = name;
-      customerInput.dataset.autofilled = "1";
-      toast(`تم تعبئة اسم العميل تلقائياً: ${name}`, 1600);
-    }
-  }
-
-  function readShipDateTime(id, endOfDay=false){
-    const v = String($(id)?.value || "").trim();
-    if (!v) return endOfDay ? Infinity : 0;
-    let ts;
-    if (/^\d{4}-\d{2}-\d{2}$/.test(v)) ts = new Date(v + (endOfDay ? "T23:59:59" : "T00:00:00")).getTime();
-    else ts = new Date(v).getTime();
-    return Number.isFinite(ts) ? ts : (endOfDay ? Infinity : 0);
-  }
-
-  function shipFolderMatches(s, folder){
-    if (!folder || folder === "all") return true;
-    if (folder === "cash") return s.paymentMethod === "cash" || (s.paymentMethod === "later" && s.partialPaymentMethod !== "bank" && num(s.paidAmount) > 0);
-    if (folder === "bank") return s.paymentMethod === "bank" || (s.paymentMethod === "later" && s.partialPaymentMethod === "bank" && num(s.paidAmount) > 0);
-    if (folder === "later") return s.paymentMethod === "later";
-    if (folder === "debt") return num(s.remaining) > 0;
-    if (folder === "partial") return s.paymentStatus === "partial";
-    if (folder === "paid") return s.paymentStatus === "paid";
-    return true;
-  }
-
-  function shipFolderCounts(rows){
-    return {
-      all: rows.length,
-      cash: rows.filter(s => shipFolderMatches(s, "cash")).length,
-      bank: rows.filter(s => shipFolderMatches(s, "bank")).length,
-      later: rows.filter(s => shipFolderMatches(s, "later")).length,
-      debt: rows.filter(s => shipFolderMatches(s, "debt")).length,
-      partial: rows.filter(s => shipFolderMatches(s, "partial")).length,
-      paid: rows.filter(s => shipFolderMatches(s, "paid")).length
-    };
-  }
-
-  function renderShipPaymentFolders(baseRows){
-    const box = $("shipPaymentFolders");
-    if (!box) return;
-    const counts = shipFolderCounts(baseRows || []);
-    const folders = [
-      ["all", "fa-folder-open", "الكل"],
-      ["cash", "fa-money-bill-wave", "كاش"],
-      ["bank", "fa-building-columns", "تحويل / تطبيق"],
-      ["later", "fa-clock", "دفع لاحق"],
-      ["debt", "fa-user-clock", "ديون / متبقي"],
-      ["partial", "fa-circle-half-stroke", "جزئي"],
-      ["paid", "fa-circle-check", "مدفوع"]
-    ];
-    box.innerHTML = folders.map(([id, icon, label]) => `
-      <button class="folder-tab ${activeShipFolder === id ? "active" : ""}" type="button" data-ship-folder="${id}">
-        <i class="fa-solid ${icon}"></i> ${label} <small>${counts[id] || 0}</small>
-      </button>
-    `).join("");
-  }
-
-  function ensureStyles(){
-    if ($("oskarShippingCbmStyle")) return;
-    document.head.insertAdjacentHTML("beforeend", `
-      <style id="oskarShippingCbmStyle">
-        .ship-cbm-page-title{font-size:24px;font-weight:900;margin:0;display:flex;align-items:center;gap:9px}
-        .ship-cbm-soft{background:linear-gradient(180deg,#fff,#f8fbff);border:1px solid rgba(226,232,240,.95);border-radius:24px;padding:14px;box-shadow:0 12px 34px rgba(15,23,42,.05)}
-        .ship-cbm-carton-list{display:grid;gap:10px;margin-top:12px}
-        .ship-cbm-carton{border:1px solid #e2e8f0;background:#fff;border-radius:22px;padding:12px;box-shadow:0 10px 24px rgba(15,23,42,.04)}
-        .ship-cbm-carton-head{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap}
-        .ship-cbm-carton-title{font-weight:900;color:#0f172a;display:flex;align-items:center;gap:7px}
-        .ship-cbm-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:12px}
-        .ship-cbm-sum-box{border:1px solid #e2e8f0;background:#f8fafc;border-radius:18px;padding:12px;min-height:78px;display:flex;flex-direction:column;justify-content:center;gap:5px}
-        .ship-cbm-sum-box span{font-size:12px;color:#64748b;font-weight:900}.ship-cbm-sum-box b{font-size:20px;font-weight:900;color:#1d4ed8;direction:ltr;text-align:right}
-        .ship-payment-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.ship-payment-method-card{border:1px solid #e2e8f0;background:#fff;border-radius:18px;padding:12px;display:flex;align-items:center;gap:8px;font-weight:900;cursor:pointer}.ship-payment-method-card input{width:18px;height:18px;accent-color:#2563eb}
-        .ship-report-tabs{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}.ship-report-panel{background:#fff;border:1px solid #e2e8f0;border-radius:24px;padding:14px;overflow:auto}
-        .ship-status-paid{background:#dcfce7!important;color:#15803d!important}.ship-status-partial{background:#fef3c7!important;color:#b45309!important}.ship-status-later{background:#fee2e2!important;color:#b91c1c!important}
-        .ship-report-page{width:794px;max-width:100%;margin:0 auto;background:#fff;color:#111827;font-family:Cairo,Arial,sans-serif;direction:rtl;padding:20px;font-size:12px;line-height:1.6}
-        .ship-report-topline{display:grid;grid-template-columns:1fr 1fr 1fr;align-items:center;font-size:10px;color:#111827;margin-bottom:4px}.ship-report-top-date{text-align:left;direction:ltr}.ship-report-top-title{text-align:center;font-weight:800}.ship-report-top-blank{text-align:right}
-        .ship-report-head{border:1px solid #d1d5db;border-radius:8px;padding:20px 22px;display:flex;flex-direction:row;gap:18px;align-items:center;justify-content:space-between;margin-bottom:18px;background:#fff}.ship-report-logo-holder{width:86px;flex:0 0 86px;display:flex;align-items:center;justify-content:center}.ship-report-logo{width:82px;height:82px;border:1px solid #e5e7eb;border-radius:8px;object-fit:cover;background:#fff;display:block}.ship-report-logo-empty{display:flex!important;align-items:center;justify-content:center;color:#cbd5e1;font-size:12px;font-weight:900}.ship-report-brand{text-align:center;flex:1;min-width:0}.ship-report-brand h2{margin:0;font-size:22px;font-weight:900;color:#1f2937;line-height:1.35}.ship-report-brand p{margin:4px 0 0;color:#374151;font-weight:800}.ship-report-meta{width:190px;flex:0 0 190px;text-align:right}.ship-report-label{color:#c06f38;font-weight:900;letter-spacing:1px;direction:ltr;text-align:left}.ship-card{border:1px solid #d1d5db;border-radius:8px;margin:16px 0;padding:18px 20px;page-break-inside:avoid}.ship-card-top{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:14px}.ship-card-code{font-size:18px;font-weight:900;color:#111827}.ship-card-small{font-size:11px;color:#4b5563}.ship-report-table{width:100%;border-collapse:collapse;min-width:0!important}.ship-report-table th{background:#fff;color:#374151;font-size:12px;border-bottom:1px solid #e5e7eb;padding:10px;text-align:right;white-space:nowrap}.ship-report-table td{font-size:12px;padding:9px 10px;border-bottom:1px solid #f1f5f9;white-space:nowrap;font-weight:800;color:#1f2937}.ship-report-total-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:14px}.ship-report-total-grid.compact{grid-template-columns:repeat(3,minmax(0,1fr))}.ship-report-total-box{border:1px solid #e5e7eb;border-radius:6px;padding:10px;text-align:right;background:#fff}.ship-report-total-box span{display:block;font-size:10px;color:#4b5563;font-weight:800}.ship-report-total-box b{display:block;margin-top:4px;font-size:16px;font-weight:900;direction:ltr;text-align:right}.ship-report-total-box .orange{color:#d97706}.ship-report-footer{display:flex;justify-content:space-between;margin-top:28px;font-size:10px;color:#111827;direction:ltr}
-        @media(max-width:720px){.ship-cbm-summary{grid-template-columns:repeat(2,minmax(0,1fr))}.ship-payment-grid{grid-template-columns:1fr}.ship-report-total-grid,.ship-report-total-grid.compact{grid-template-columns:repeat(2,minmax(0,1fr))}}
-        .ship-report-page .ship-report-head{display:flex!important;flex-direction:row!important;align-items:center!important;justify-content:space-between!important;text-align:initial!important;gap:16px!important;padding:18px 20px!important;min-height:116px!important}
-        .ship-report-brand-wrap{display:flex!important;align-items:center!important;justify-content:flex-start!important;gap:14px!important;min-width:0!important;flex:1 1 auto!important;text-align:right!important}
-        .ship-report-brand{text-align:right!important;flex:0 1 auto!important;min-width:0!important}.ship-report-brand h2{font-size:22px!important;margin:0!important}.ship-report-brand p{margin:4px 0 0!important}
-        .ship-report-logo-holder{width:auto!important;min-width:0!important;flex:0 0 auto!important;display:flex!important;align-items:center!important;justify-content:center!important}.ship-report-logo-holder:empty{display:none!important}.ship-report-logo{width:74px!important;height:74px!important;margin:0!important}
-        .ship-report-meta{width:210px!important;flex:0 0 210px!important;text-align:left!important}.ship-report-label{text-align:left!important}.ship-report-count-line{margin-top:14px;color:#4b5563;font-weight:800}.ship-report-count-line b{font-size:18px;color:#111827}
-        .ship-export-loading{position:fixed;inset:0;z-index:999999;background:rgba(15,23,42,.48);backdrop-filter:blur(8px);display:none;align-items:center;justify-content:center;font-family:Cairo,Arial,sans-serif;direction:rtl}.ship-export-loading.show{display:flex}.ship-export-loading-card{background:#fff;border:1px solid #e2e8f0;border-radius:28px;box-shadow:0 30px 80px rgba(15,23,42,.28);padding:22px 26px;min-width:230px;text-align:center;font-weight:900;color:#0f172a}.ship-export-spinner{width:54px;height:54px;border-radius:999px;border:5px solid #e2e8f0;border-top-color:#2563eb;margin:0 auto 12px;animation:shipSpin .8s linear infinite}@keyframes shipSpin{to{transform:rotate(360deg)}}
-        @media(max-width:720px){.ship-report-page .ship-report-head{flex-direction:row!important;text-align:initial!important}.ship-report-brand-wrap{justify-content:flex-start!important;text-align:right!important}.ship-report-meta{width:170px!important;flex-basis:170px!important;text-align:left!important}.ship-report-brand h2{font-size:18px!important}.ship-report-logo{width:58px!important;height:58px!important}}
-        @media print{#printArea .ship-report-page{width:100%!important;max-width:none!important;padding:12mm!important}.ship-card{break-inside:avoid;page-break-inside:avoid}}
-      </style>
-    `);
-  }
-
-  function ensureNav(){
-    const sidebar = $("sidebar");
-    if (sidebar && !sidebar.querySelector('[data-ship-page="shippingCalc"]')){
-      const reports = sidebar.querySelector('[data-page="reports"]') || sidebar.querySelector('[data-page="settings"]');
-      const html = `
-        <button class="nav-btn" type="button" data-ship-page="shippingCalc"><span class="nav-icon"><i class="fa-solid fa-calculator"></i></span> حاسبة طرود الشحن</button>
-        <button class="nav-btn" type="button" data-ship-page="shippingShipments"><span class="nav-icon"><i class="fa-solid fa-boxes-packing"></i></span> الشحنات</button>
-      `;
-      if (reports) reports.insertAdjacentHTML("beforebegin", html);
-      else sidebar.insertAdjacentHTML("beforeend", html);
-    }
-    applyShippingPermissionsUI();
-  }
-
-  function ensurePages(){
-    const main = document.querySelector("main.main");
-    if (!main) return;
-    if (!$('page-shippingCalc')){
-      const sec = document.createElement("section");
-      sec.id = "page-shippingCalc";
-      sec.className = "section";
-      sec.innerHTML = `
-        <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap">
-          <h1 class="ship-cbm-page-title"><i class="fa-solid fa-calculator"></i> حاسبة طرود الشحن</h1>
-          <div style="display:flex;gap:8px;flex-wrap:wrap">
-            <button id="shipNewBtn" class="ghost-btn" type="button"><i class="fa-solid fa-rotate-right"></i> شحنة جديدة</button>
-            <button class="primary-btn" type="button" data-ship-page="shippingShipments"><i class="fa-solid fa-list"></i> سجل الشحنات</button>
-          </div>
-        </div>
-        <div class="card">
-          <form id="shippingCalcForm">
-            <div class="form-grid">
-              <div><label class="field-label">كود الشحن <span style="color:#dc2626">*</span></label><input id="shipCode" class="input" required placeholder="مثال: 30001"></div>
-              <div><label class="field-label">اسم العميل اختياري</label><input id="shipCustomer" class="input" placeholder="اسم العميل"></div>
-              <div><label class="field-label">عدد الكراتين</label><input id="shipCartonsCount" class="input" type="number" inputmode="numeric" min="1" step="1" value="1"></div>
-              <div><label class="field-label">سعر CBM بالشيكل</label><input id="shipCbmPrice" class="input" type="number" inputmode="decimal" min="0" step="0.001" placeholder="مثال: 8500"></div>
-              <div class="full-row"><label class="field-label">ملاحظات</label><textarea id="shipNotes" class="textarea" placeholder="أي ملاحظات على الشحنة..."></textarea></div>
-            </div>
-            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
-              <button id="shipApplyCountBtn" class="ghost-btn" type="button"><i class="fa-solid fa-layer-group"></i> فتح حسب العدد</button>
-              <button id="shipAddCartonBtn" class="gold-btn" type="button"><i class="fa-solid fa-plus"></i> إضافة كرتونة جديدة</button>
-            </div>
-            <div id="shipCartonsList" class="ship-cbm-carton-list"></div>
-            <div class="ship-cbm-summary">
-              <div class="ship-cbm-sum-box"><span>مجموع الكراتين</span><b id="shipSumCartons">0</b></div>
-              <div class="ship-cbm-sum-box"><span>مجموع CBM (م³)</span><b id="shipSumCbm">0.000</b></div>
-              <div class="ship-cbm-sum-box"><span>سعر CBM</span><b id="shipSumPrice">₪ 0.00</b></div>
-              <div class="ship-cbm-sum-box"><span>السعر الإجمالي</span><b id="shipSumTotal" style="color:#d97706">₪ 0.00</b></div>
-            </div>
-            <button id="shipContinuePaymentBtn" class="primary-btn" type="submit" style="width:100%;margin-top:14px"><i class="fa-solid fa-credit-card"></i> إنهاء وإظهار شاشة الدفع</button>
-          </form>
-        </div>
-      `;
-      main.appendChild(sec);
-    }
-    if (!$('page-shippingShipments')){
-      const sec = document.createElement("section");
-      sec.id = "page-shippingShipments";
-      sec.className = "section";
-      sec.innerHTML = `
-        <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap">
-          <h1 class="ship-cbm-page-title"><i class="fa-solid fa-boxes-packing"></i> الشحنات والتقارير</h1>
-          <button class="primary-btn" type="button" data-ship-page="shippingCalc"><i class="fa-solid fa-plus"></i> إضافة شحنة</button>
-        </div>
-        <div class="clean-stats-card"><div class="clean-stats-grid" id="shipStatsGrid"></div></div>
-        <div class="card" style="margin-bottom:14px">
-          <div class="folder-tabs" id="shipPaymentFolders"></div>
-          <div class="form-grid">
-            <input id="shipSearch" class="input" placeholder="بحث بكود الشحن أو اسم العميل...">
-            <select id="shipSort" class="select"><option value="date_desc">الأحدث تاريخاً</option><option value="date_asc">الأقدم تاريخاً</option><option value="code_asc">حسب الكود تصاعدي</option><option value="code_desc">حسب الكود تنازلي</option></select>
-            <select id="shipPeriod" class="select"><option value="all">كل السجل</option><option value="today">اليوم</option><option value="week">أسبوع</option><option value="month">شهر</option><option value="custom">من تاريخ ووقت إلى تاريخ ووقت</option></select>
-            <input id="shipDateFrom" type="datetime-local" class="input" style="display:none" title="من تاريخ ووقت">
-            <input id="shipDateTo" type="datetime-local" class="input" style="display:none" title="إلى تاريخ ووقت">
-          </div>
-          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
-            <button id="shipSummaryReportBtn" class="ghost-btn" type="button"><i class="fa-solid fa-chart-pie"></i> تقرير شامل</button>
-            <button id="shipDetailedReportBtn" class="gold-btn" type="button"><i class="fa-solid fa-file-lines"></i> تقرير تفصيلي</button>
-            <button id="shipExcelBtn" class="success-btn" type="button"><i class="fa-solid fa-file-excel"></i> Excel</button>
-            <button id="shipPdfBtn" class="danger-btn" type="button"><i class="fa-solid fa-file-pdf"></i> PDF</button>
-            <button id="shipImageBtn" class="success-btn" type="button"><i class="fa-solid fa-image"></i> صورة</button>
-            <button id="shipWhatsappBtn" class="ghost-btn" type="button"><i class="fa-brands fa-whatsapp"></i> واتس اب</button>
-          </div>
-        </div>
-        <div class="card"><div class="table-wrap"><table><thead><tr><th>التاريخ</th><th>كود الشحن</th><th>العميل</th><th>الكراتين</th><th>CBM</th><th>سعر CBM</th><th>إجمالي السعر</th><th>مدفوع</th><th>متبقي</th><th>الدفع</th><th>الحالة</th><th>الإجراءات</th></tr></thead><tbody id="shipmentsTable"></tbody></table></div></div>
-      `;
-      main.appendChild(sec);
-    }
-  }
-
-  function shipSwitchPage(page){
-    if (!window.state?.auth?.user){ toast("سجل الدخول أولاً"); return; }
-    if (!shippingHasPermission(page)){ toast("لا تملك صلاحية فتح هذا القسم"); return; }
-    $$(".section").forEach(s => s.classList.remove("active"));
-    const sec = $(`page-${page}`);
-    if (sec) sec.classList.add("active");
-    $$(".nav-btn,.bottom-btn").forEach(b => b.classList.remove("active"));
-    $$(`[data-ship-page="${page}"]`).forEach(b => b.classList.add("active"));
-    $("sidebar")?.classList.remove("open");
-    if (page === "shippingCalc") renderCalcPage();
-    if (page === "shippingShipments") renderShipmentsPage();
-  }
-
-  window.oskarShipSwitchPage = shipSwitchPage;
-
-  function resetDraft(){
-    draft.editingId = "";
-    draft.cartons = [{ id: uid("carton"), length:"", width:"", height:"", qty:1 }];
-    if ($("shippingCalcForm")) $("shippingCalcForm").reset();
-    if ($("shipCartonsCount")) $("shipCartonsCount").value = 1;
-    renderCalcPage();
-  }
-
-  function setDraftFromShipment(ship){
-    const s = normalizeShipment(ship);
-    if (!s) return;
-    draft.editingId = s.id;
-    draft.cartons = s.cartons.map(c => ({...c}));
-    shipSwitchPage("shippingCalc");
-    setTimeout(() => {
-      if ($("shipCode")) $("shipCode").value = s.code;
-      if ($("shipCustomer")) $("shipCustomer").value = s.customerName;
-      if ($("shipCbmPrice")) $("shipCbmPrice").value = s.cbmPrice || "";
-      if ($("shipCartonsCount")) $("shipCartonsCount").value = s.cartons.length || 1;
-      if ($("shipNotes")) $("shipNotes").value = s.notes || "";
-      renderCalcPage();
-    }, 60);
-  }
-
-  function applyCount(){
-    const count = Math.max(1, Math.round(num($("shipCartonsCount")?.value, draft.cartons.length || 1)));
-    const old = draft.cartons.slice();
-    while (draft.cartons.length < count) {
-      const last = old[old.length - 1] || draft.cartons[draft.cartons.length - 1] || {length:"",width:"",height:"",qty:1};
-      draft.cartons.push({ id: uid("carton"), length:last.length || "", width:last.width || "", height:last.height || "", qty:1 });
-    }
-    if (draft.cartons.length > count) draft.cartons = draft.cartons.slice(0, count);
-    renderCalcPage();
-  }
-
-  function readCartonsFromDom(){
-    const list = $("shipCartonsList");
-    if (!list) return;
-    draft.cartons = $$(".ship-cbm-carton", list).map(card => {
-      const q = card.querySelector('[data-field="qty"]')?.value;
-      return {
-        id: card.dataset.cartonId || uid("carton"),
-        length: card.querySelector('[data-field="length"]')?.value ?? "",
-        width: card.querySelector('[data-field="width"]')?.value ?? "",
-        height: card.querySelector('[data-field="height"]')?.value ?? "",
-        qty: q === "" || q == null ? 1 : Math.max(1, Math.round(num(q, 1)))
-      };
-    });
-  }
-
-  function renderCalcPage(){
-    ensureStyles();
-    const list = $("shipCartonsList");
-    if (!list) return;
-    if (!draft.cartons.length) draft.cartons.push({ id: uid("carton"), length:"", width:"", height:"", qty:1 });
-    list.innerHTML = draft.cartons.map((c, i) => {
-      const calc = calcLine(c);
-      return `
-        <div class="ship-cbm-carton" data-carton-id="${esc(c.id)}" data-carton-index="${i}">
-          <div class="ship-cbm-carton-head">
-            <div class="ship-cbm-carton-title"><i class="fa-solid fa-box"></i> كرتونة رقم ${i+1} <span class="badge blue ship-cbm-volume-badge">${fmt(calc.totalCbm)} م³</span></div>
-            <div style="display:flex;gap:7px;flex-wrap:wrap">
-              <button class="ghost-btn" type="button" data-carton-repeat="${i}" style="padding:8px 10px;border-radius:13px"><i class="fa-solid fa-copy"></i> تكرار</button>
-              <button class="danger-btn" type="button" data-carton-remove="${i}" style="padding:8px 10px;border-radius:13px"><i class="fa-solid fa-trash"></i></button>
-            </div>
-          </div>
-          <div class="form-grid-compact">
-            <div><label class="field-label">الطول (سم)</label><input class="input" type="number" inputmode="decimal" min="0" step="0.001" data-field="length" value="${esc(c.length)}" placeholder="100"></div>
-            <div><label class="field-label">العرض (سم)</label><input class="input" type="number" inputmode="decimal" min="0" step="0.001" data-field="width" value="${esc(c.width)}" placeholder="70"></div>
-            <div><label class="field-label">الارتفاع (سم)</label><input class="input" type="number" inputmode="decimal" min="0" step="0.001" data-field="height" value="${esc(c.height)}" placeholder="60"></div>
-            <div><label class="field-label">العدد</label><input class="input" type="number" inputmode="numeric" min="1" step="1" data-field="qty" value="${esc(c.qty || 1)}"></div>
-            <div class="full-row"><button class="gold-btn" type="button" data-carton-add-after="${i}" style="width:100%;margin-top:2px"><i class="fa-solid fa-plus"></i> إضافة كرتونة تحت هذه</button></div>
-          </div>
-        </div>`;
-    }).join("");
-    updateCalcSummary();
-  }
-
-  function updateCalcSummary(){
-    readCartonsFromDom();
-    const calc = calcShipment(draft.cartons, $("shipCbmPrice")?.value || 0);
-    $$(".ship-cbm-carton").forEach((card, i) => {
-      const line = calc.lines[i] || calcLine({});
-      const badge = card.querySelector(".ship-cbm-volume-badge");
-      if (badge) badge.textContent = `${fmt(line.totalCbm)} م³`;
-    });
-    if ($("shipSumCartons")) $("shipSumCartons").textContent = String(calc.totalCartons);
-    if ($("shipSumCbm")) $("shipSumCbm").textContent = fmt(calc.totalCbm);
-    if ($("shipSumPrice")) $("shipSumPrice").textContent = money(calc.cbmPrice);
-    if ($("shipSumTotal")) $("shipSumTotal").textContent = money(calc.total);
-    if ($("shipCartonsCount")) $("shipCartonsCount").value = String(draft.cartons.length || 1);
-  }
-
-  function collectDraft(){
-    autoFillShipCustomer(false);
-    readCartonsFromDom();
-    const code = String($("shipCode")?.value || "").trim();
-    const customerName = String($("shipCustomer")?.value || "").trim();
-    const cbmPrice = num($("shipCbmPrice")?.value, 0);
-    const notes = String($("shipNotes")?.value || "").trim();
-    const cartons = draft.cartons.map(c => ({...c, length:num(c.length), width:num(c.width), height:num(c.height), qty:Math.max(1, Math.round(num(c.qty, 1)))}));
-    const calc = calcShipment(cartons, cbmPrice);
-    return { code, customerName, cartons, cbmPrice, notes, ...calc };
-  }
-
-  function validateDraft(d){
-    if (!d.code) { toast("كود الشحن إجباري"); return false; }
-    if (!d.cartons.length) { toast("أضف كرتونة واحدة على الأقل"); return false; }
-    if (!d.cartons.every(c => num(c.length)>0 && num(c.width)>0 && num(c.height)>0)) { toast("أدخل الطول والعرض والارتفاع لكل كرتونة"); return false; }
-    if (d.cbmPrice <= 0) { toast("أدخل سعر CBM"); return false; }
-    if (d.totalCbm <= 0) { toast("مجموع CBM غير صحيح"); return false; }
-    return true;
-  }
-
-  function openPaymentModal(d){
-    const old = draft.editingId ? st().shipments.find(x => x.id === draft.editingId) : null;
-    const paidDefault = old ? num(old.paidAmount, 0) : 0;
-    const methodDefault = old?.paymentMethod || "cash";
-    const partialMethodDefault = old?.partialPaymentMethod || "cash";
-    const defaultPaidValue = old ? paidDefault : (methodDefault === "later" ? 0 : d.total.toFixed(2));
-    const html = `
-      <div class="ship-cbm-soft">
-        <div style="background:#eff6ff;border:1px solid #bfdbfe;color:#1d4ed8;border-radius:18px;padding:10px 12px;margin-bottom:12px;font-weight:900;line-height:1.8">
-          <i class="fa-solid fa-circle-info"></i> راجع الدفع أولاً، ولن يتم حفظ الشحنة إلا بعد الضغط على زر حفظ الشحنة.
-        </div>
-        <div class="ship-cbm-summary" style="margin-top:0">
-          <div class="ship-cbm-sum-box"><span>كود الشحن</span><b>${esc(d.code)}</b></div>
-          <div class="ship-cbm-sum-box"><span>الكراتين</span><b>${d.totalCartons}</b></div>
-          <div class="ship-cbm-sum-box"><span>CBM</span><b>${fmt(d.totalCbm)}</b></div>
-          <div class="ship-cbm-sum-box"><span>المطلوب</span><b style="color:#d97706">${money(d.total)}</b></div>
-        </div>
-        <form id="shipPaymentForm" style="margin-top:14px">
-          <label class="field-label">طريقة الدفع</label>
-          <div class="ship-payment-grid">
-            <label class="ship-payment-method-card"><input type="radio" name="shipPayMethod" value="cash" ${methodDefault === "cash" ? "checked" : ""}> <i class="fa-solid fa-money-bill-wave"></i> دفع كاش</label>
-            <label class="ship-payment-method-card"><input type="radio" name="shipPayMethod" value="bank" ${methodDefault === "bank" ? "checked" : ""}> <i class="fa-solid fa-building-columns"></i> تحويل بنكي / تطبيق</label>
-            <label class="ship-payment-method-card"><input type="radio" name="shipPayMethod" value="later" ${methodDefault === "later" ? "checked" : ""}> <i class="fa-solid fa-clock"></i> دفع لاحق</label>
-          </div>
-          <div class="form-grid" style="margin-top:12px">
-            <div id="shipPayAccountBox"><label class="field-label">حساب التحويل</label><select id="shipPayAccount" class="select">${accountOptions(old?.paymentAccountId || "")}</select></div>
-            <div id="shipPartialMethodBox"><label class="field-label">طريقة الدفعة الآن عند الدفع لاحقاً</label><select id="shipPartialPayMethod" class="select"><option value="cash" ${partialMethodDefault !== "bank" ? "selected" : ""}>دفعة كاش</option><option value="bank" ${partialMethodDefault === "bank" ? "selected" : ""}>دفعة تحويل بنكي / تطبيق</option></select></div>
-            <div id="shipPartialAccountBox"><label class="field-label">حساب دفعة التحويل</label><select id="shipPartialPayAccount" class="select">${accountOptions(old?.partialPaymentAccountId || old?.paymentAccountId || "")}</select></div>
-            <div><label class="field-label">الدفعة المدفوعة الآن</label><input id="shipPaidAmount" class="input" type="number" inputmode="decimal" min="0" step="0.001" value="${defaultPaidValue}"></div>
-            <div class="full-row"><div class="ship-cbm-sum-box"><span>المتبقي على العميل</span><b id="shipRemainingPreview" style="color:#dc2626">${money(Math.max(0, d.total - num(defaultPaidValue)))}</b></div></div>
-          </div>
-          <button class="primary-btn" type="submit" style="width:100%;margin-top:14px"><i class="fa-solid fa-floppy-disk"></i> حفظ الشحنة</button>
-        </form>
-      </div>`;
-    modal("دفع الشحنة قبل الحفظ", html, true);
-    let lastMethod = document.querySelector('input[name="shipPayMethod"]:checked')?.value || methodDefault;
-    const updatePay = (fromMethodChange=false) => {
-      const method = document.querySelector('input[name="shipPayMethod"]:checked')?.value || "cash";
-      const paidInput = $("shipPaidAmount");
-      if (fromMethodChange && paidInput){
-        paidInput.value = method === "later" ? "0" : d.total.toFixed(2);
-      }
-      if ($("shipPayAccountBox")) $("shipPayAccountBox").style.display = method === "bank" ? "block" : "none";
-      if ($("shipPartialMethodBox")) $("shipPartialMethodBox").style.display = method === "later" ? "block" : "none";
-      const partialMethod = $("shipPartialPayMethod")?.value || "cash";
-      const paid = Math.max(0, num(paidInput?.value, 0));
-      if ($("shipPartialAccountBox")) $("shipPartialAccountBox").style.display = (method === "later" && partialMethod === "bank" && paid > 0) ? "block" : "none";
-      if ($("shipRemainingPreview")) $("shipRemainingPreview").textContent = money(Math.max(0, d.total - paid));
-      lastMethod = method;
-    };
-    $$('input[name="shipPayMethod"]').forEach(x => x.onchange = () => updatePay(true));
-    if ($("shipPartialPayMethod")) $("shipPartialPayMethod").onchange = () => updatePay(false);
-    if ($("shipPaidAmount")) $("shipPaidAmount").oninput = () => updatePay(false);
-    updatePay(false);
-    $("shipPaymentForm").onsubmit = async (e) => {
-      e.preventDefault();
-      const method = document.querySelector('input[name="shipPayMethod"]:checked')?.value || "cash";
-      const paid = Math.min(d.total, Math.max(0, num($("shipPaidAmount")?.value, 0)));
-      let accountId = "";
-      let accountName = "";
-      let partialPaymentMethod = "";
-      let partialPaymentAccountId = "";
-      let partialPaymentAccountName = "";
-      if (method === "cash"){
-        accountName = "دفع كاش";
-      } else if (method === "bank"){
-        accountId = String($("shipPayAccount")?.value || "");
-        const account = (window.state?.paymentAccounts || []).find(a => String(a.id) === accountId);
-        accountName = account?.name || "تحويل بنكي";
-      } else {
-        accountName = "دفع لاحق";
-        if (paid > 0){
-          partialPaymentMethod = $("shipPartialPayMethod")?.value || "cash";
-          if (partialPaymentMethod === "bank"){
-            partialPaymentAccountId = String($("shipPartialPayAccount")?.value || "");
-            const pAccount = (window.state?.paymentAccounts || []).find(a => String(a.id) === partialPaymentAccountId);
-            partialPaymentAccountName = pAccount?.name || "تحويل بنكي";
-          } else {
-            partialPaymentAccountName = "دفع كاش";
-          }
-        }
-      }
-      const now = Date.now();
-      const ship = normalizeShipment({
-        id: old?.id || uid("shipment"),
-        code: d.code,
-        customerName: d.customerName,
-        cartons: d.cartons,
-        cbmPrice: d.cbmPrice,
-        totalCartons: d.totalCartons,
-        totalCbm: d.totalCbm,
-        totalPrice: d.total,
-        paymentMethod: method,
-        paymentAccountId: accountId,
-        paymentAccountName: accountName,
-        partialPaymentMethod,
-        partialPaymentAccountId,
-        partialPaymentAccountName,
-        paidAmount: paid,
-        notes: d.notes,
-        createdAt: old?.createdAt || now,
-        updatedAt: now,
-        syncPending: true
-      });
-      const arr = st().shipments || [];
-      const idx = arr.findIndex(x => x.id === ship.id);
-      if (idx >= 0) arr[idx] = ship; else arr.unshift(ship);
-      st().shipments = arr.sort((a,b) => Number(b.createdAt)-Number(a.createdAt));
-      saveLocalShipments();
-      rememberShipCustomer(ship.code, ship.customerName);
-      closeModal();
-      await saveRemoteShipment(ship);
-      toast("تم حفظ شحنة الطرود بنجاح");
-      resetDraft();
-      renderShipmentsPage();
-      shipSwitchPage("shippingShipments");
-    };
-  }
-
-  function statusBadge(s){
-    if (s.paymentStatus === "paid") return `<span class="badge ship-status-paid">مدفوع</span>`;
-    if (s.paymentStatus === "partial") return `<span class="badge ship-status-partial">مدفوع جزئي</span>`;
-    return `<span class="badge ship-status-later">دفع لاحق</span>`;
-  }
-
-  function filteredShipments(ignoreFolder=false){
-    const query = String($("shipSearch")?.value || "").trim().toLowerCase();
-    const period = $("shipPeriod")?.value || "all";
-    const sort = $("shipSort")?.value || "date_desc";
-    const now = Date.now();
-    const today = startOfDay(new Date());
-    const week = now - 7*86400000;
-    const month = now - 30*86400000;
-    let from = 0, to = Infinity;
-    if (period === "today") from = today;
-    if (period === "week") from = week;
-    if (period === "month") from = month;
-    if (period === "custom"){
-      from = readShipDateTime("shipDateFrom", false);
-      to = readShipDateTime("shipDateTo", true);
-    }
-    const rows = (st().shipments || []).filter(s => {
-      const time = Number(s.createdAt || 0);
-      const matches = !query || String(s.code || "").toLowerCase().includes(query) || String(s.customerName || "").toLowerCase().includes(query);
-      return matches && time >= from && time <= to && (ignoreFolder || shipFolderMatches(s, activeShipFolder));
-    });
-    rows.sort((a,b) => {
-      if (sort === "date_asc") return Number(a.createdAt)-Number(b.createdAt);
-      if (sort === "code_asc") return String(a.code).localeCompare(String(b.code), "ar", {numeric:true});
-      if (sort === "code_desc") return String(b.code).localeCompare(String(a.code), "ar", {numeric:true});
-      return Number(b.createdAt)-Number(a.createdAt);
-    });
-    return rows;
-  }
-
-  function totals(rows){
-    return rows.reduce((a,s) => {
-      const paid = num(s.paidAmount);
-      a.count += 1;
-      a.cartons += num(s.totalCartons);
-      a.cbm += num(s.totalCbm);
-      a.sales += num(s.totalPrice);
-      a.paid += paid;
-      a.remaining += num(s.remaining);
-      if (s.paymentMethod === "cash") a.cash += paid;
-      if (s.paymentMethod === "bank") a.bank += paid;
-      if (s.paymentMethod === "later") {
-        a.later += num(s.remaining);
-        if (s.partialPaymentMethod === "bank") a.bank += paid;
-        else if (paid > 0) a.cash += paid;
-      }
-      return a;
-    }, {count:0, cartons:0, cbm:0, sales:0, paid:0, remaining:0, cash:0, bank:0, later:0});
-  }
-
-  function renderShipmentsPage(){
-    const table = $("shipmentsTable");
-    if (!table) return;
-    const period = $("shipPeriod")?.value || "all";
-    ["shipDateFrom","shipDateTo"].forEach(id => { if ($(id)) $(id).style.display = period === "custom" ? "block" : "none"; });
-    const baseRows = filteredShipments(true);
-    renderShipPaymentFolders(baseRows);
-    const rows = filteredShipments(false);
-    const t = totals(rows);
-    if ($("shipStatsGrid")) $("shipStatsGrid").innerHTML = `
-      <div class="clean-stat"><div class="clean-stat-title"><span>عدد الشحنات</span><i class="fa-solid fa-boxes-packing"></i></div><div class="clean-stat-value blue">${t.count}</div></div>
-      <div class="clean-stat"><div class="clean-stat-title"><span>مجموع الكراتين</span><i class="fa-solid fa-box"></i></div><div class="clean-stat-value dark">${t.cartons}</div></div>
-      <div class="clean-stat"><div class="clean-stat-title"><span>مجموع CBM</span><i class="fa-solid fa-cube"></i></div><div class="clean-stat-value green">${fmt(t.cbm)}</div></div>
-      <div class="clean-stat"><div class="clean-stat-title"><span>إجمالي السعر</span><i class="fa-solid fa-shekel-sign"></i></div><div class="clean-stat-value gold">${money(t.sales)}</div></div>
-      <div class="clean-stat"><div class="clean-stat-title"><span>المدفوع</span><i class="fa-solid fa-money-check-dollar"></i></div><div class="clean-stat-value green">${money(t.paid)}</div></div>
-      <div class="clean-stat"><div class="clean-stat-title"><span>المتبقي</span><i class="fa-solid fa-clock"></i></div><div class="clean-stat-value red">${money(t.remaining)}</div></div>
-      <div class="clean-stat"><div class="clean-stat-title"><span>دفع كاش</span><i class="fa-solid fa-money-bill-wave"></i></div><div class="clean-stat-value green">${money(t.cash)}</div></div>
-      <div class="clean-stat"><div class="clean-stat-title"><span>تحويلات بنكية</span><i class="fa-solid fa-building-columns"></i></div><div class="clean-stat-value blue">${money(t.bank)}</div></div>
-      <div class="clean-stat"><div class="clean-stat-title"><span>دفع لاحق</span><i class="fa-solid fa-calendar-check"></i></div><div class="clean-stat-value red">${money(t.later)}</div></div>`;
-    table.innerHTML = rows.length ? rows.map(s => `
-      <tr>
-        <td>${formatDate(s.createdAt)}</td><td><b>${esc(s.code)}</b>${s.syncPending ? ' <span class="badge yellow">محلي</span>' : ''}</td><td>${esc(s.customerName || "-")}</td><td>${s.totalCartons}</td><td>${fmt(s.totalCbm)}</td><td>${money(s.cbmPrice)}</td><td class="money">${money(s.totalPrice)}</td><td style="color:#16a34a;font-weight:900">${money(s.paidAmount)}</td><td style="color:#dc2626;font-weight:900">${money(s.remaining)}</td><td>${esc(shipPaymentLabel(s))}</td><td>${statusBadge(s)}</td>
-        <td><div style="display:flex;gap:6px;flex-wrap:wrap"><button class="ghost-btn" type="button" data-ship-view="${s.id}" style="padding:7px 9px;border-radius:12px"><i class="fa-solid fa-eye"></i></button><button class="primary-btn" type="button" data-ship-edit="${s.id}" style="padding:7px 9px;border-radius:12px"><i class="fa-solid fa-pen"></i></button><button class="ghost-btn" type="button" data-ship-wa="${s.id}" style="padding:7px 9px;border-radius:12px"><i class="fa-brands fa-whatsapp"></i></button><button class="danger-btn" type="button" data-ship-del="${s.id}" style="padding:7px 9px;border-radius:12px"><i class="fa-solid fa-trash"></i></button></div></td>
-      </tr>`).join("") : `<tr><td colspan="12" class="muted" style="text-align:center;padding:32px">لا توجد شحنات حسب الفلتر الحالي</td></tr>`;
-  }
-
-  function shopLogo(){
-    const s = window.state?.settings || {};
-    const bad = (x) => {
-      const v = String(x || "").trim();
-      return !v || v === "undefined" || v === "null" || v.startsWith("blob:null") || /blogger\.googleusercontent\.com\/img\/b\/R29vZ2xl\/AVvXsEhc2-SIvoXM037iekfqFFgG9ScPFkd2OYmDCTxAsulO8-UYIByWI5H7pAhaNRr3OkT-WR5h-RrPQfjsWpv4RCPLDIauhevT3RdNQIAICh-ZgdTMWn8ZL8oabWZL-sttvTQ2EAk6LckmOIa2lEdSyjHW9_jrjbMpnItLw9TzulLth5MoEQxj3un_cLoqHL9C/i.test(v);
-    };
-    const localCandidates = [s.localLogo, s.logoData, s.logoBase64, s.companyLogo, s.storeLogo, s.shopLogo].filter(x => !bad(x));
-    if (localCandidates.length) return String(localCandidates[0]).trim();
-    if ((s.logoMode === "url" || s.logoMode === "remote") && !bad(s.logo)) return String(s.logo).trim();
-    return "";
-  }
-
-  function reportLogoHtml(){
-    const logo = shopLogo();
-    if (!logo) return "";
-    return `<img class="ship-report-logo" src="${esc(logo)}" referrerpolicy="no-referrer" onerror="this.remove()">`;
-  }
-
-  function shopName(){
-    const s = window.state?.settings || {};
-    return s.shopName || s.storeName || s.companyName || $("topShopName")?.textContent?.trim() || "مجموعة إيلاف للشحن والتجارة الدولية";
-  }
-
-  function buildDetailedReport(rows){
-    const t = totals(rows);
-    const cards = rows.map((s, idx) => {
-      const calc = calcShipment(s.cartons, s.cbmPrice);
-      return `
-        <div class="ship-card">
-          <div class="ship-card-top">
-            <div><div class="ship-card-small">${formatDate(s.createdAt)}</div></div>
-            <div style="text-align:left"><div class="ship-card-code">${esc(s.code)}</div><div class="ship-card-small">العميل: ${esc(s.customerName || "-")}</div></div>
-            <div class="ship-card-small">${idx + 1}</div>
-          </div>
-          <table class="ship-report-table"><thead><tr><th>#</th><th>الطول (سم)</th><th>العرض (سم)</th><th>الارتفاع (سم)</th><th>العدد</th><th>حجم الكرتونة (م³)</th><th>إجمالي (م³)</th></tr></thead><tbody>
-            ${calc.lines.map((l,i) => `<tr><td>${i+1}</td><td>${fmt(l.length)}</td><td>${fmt(l.width)}</td><td>${fmt(l.height)}</td><td><span style="color:#c56a36">${l.qty}×</span></td><td>${fmt(l.unitCbm)}</td><td>${fmt(l.totalCbm)}</td></tr>`).join("")}
-          </tbody></table>
-          <div class="ship-report-total-grid compact">
-            <div class="ship-report-total-box"><span>كراتين</span><b>${s.totalCartons}</b></div>
-            <div class="ship-report-total-box"><span>CBM (م³)</span><b>${fmt(s.totalCbm)}</b></div>
-            <div class="ship-report-total-box"><span>سعر CBM</span><b>${money(s.cbmPrice)}</b></div>
-            <div class="ship-report-total-box"><span>إجمالي السعر</span><b class="orange">${money(s.totalPrice)}</b></div>
-            <div class="ship-report-total-box"><span>المدفوع</span><b style="color:#16a34a">${money(s.paidAmount)}</b></div>
-            <div class="ship-report-total-box"><span>المتبقي</span><b style="color:#dc2626">${money(s.remaining)}</b></div>
-          </div>
-          <div class="ship-card-small" style="margin-top:8px">الدفع: ${shipPaymentLabel(s)}</div>
-        </div>`;
-    }).join("");
-    return `
-      <div class="ship-report-page">
-        <div class="ship-report-topline"><span class="ship-report-top-date">${formatDate(Date.now())}</span><span class="ship-report-top-title">CBM</span><span class="ship-report-top-blank"></span></div>
-        <div class="ship-report-head">
-          <div class="ship-report-brand-wrap"><div class="ship-report-logo-holder">${reportLogoHtml()}</div><div class="ship-report-brand"><h2>${esc(shopName())}</h2><p>International Trading · شحن وتجارة</p><div class="ship-report-count-line">عدد الشحنات في التقرير: <b>${rows.length}</b></div></div></div>
-          <div class="ship-report-meta"><div class="ship-report-label">DETAILED REPORT</div><div style="font-weight:900;margin-top:8px">تقرير تفصيلي كامل</div><div class="ship-card-small">${formatDate(Date.now())}</div></div>
-        </div>
-        ${cards || `<div class="ship-card" style="text-align:center;font-weight:900">لا توجد بيانات</div>`}
-        <div class="ship-report-footer"><span></span><span>1/1</span></div>
-      </div>`;
-  }
-
-  function buildSummaryReport(rows){
-    const t = totals(rows);
-    return `<div class="ship-report-page"><div class="ship-report-topline"><span class="ship-report-top-date">${formatDate(Date.now())}</span><span class="ship-report-top-title">تقرير شامل للشحنات</span><span class="ship-report-top-blank"></span></div><div class="ship-report-head"><div class="ship-report-brand-wrap"><div class="ship-report-logo-holder">${reportLogoHtml()}</div><div class="ship-report-brand"><h2>${esc(shopName())}</h2><p>تقرير شامل</p></div></div><div class="ship-report-meta"><div class="ship-report-label">SUMMARY REPORT</div><div style="font-weight:900;margin-top:8px">حسابات المبيعات والشحنات</div><div class="ship-card-small">${formatDate(Date.now())}</div></div></div><div class="ship-card"><div class="ship-report-total-grid"><div class="ship-report-total-box"><span>عدد الشحنات</span><b>${t.count}</b></div><div class="ship-report-total-box"><span>الكراتين</span><b>${t.cartons}</b></div><div class="ship-report-total-box"><span>CBM</span><b>${fmt(t.cbm)}</b></div><div class="ship-report-total-box"><span>إجمالي السعر</span><b class="orange">${money(t.sales)}</b></div><div class="ship-report-total-box"><span>المدفوع</span><b>${money(t.paid)}</b></div><div class="ship-report-total-box"><span>المتبقي</span><b>${money(t.remaining)}</b></div><div class="ship-report-total-box"><span>دفع كاش</span><b>${money(t.cash)}</b></div><div class="ship-report-total-box"><span>تحويلات بنكية</span><b>${money(t.bank)}</b></div><div class="ship-report-total-box"><span>دفع لاحق</span><b>${money(t.later)}</b></div></div></div><div class="ship-card"><table class="ship-report-table"><thead><tr><th>التاريخ</th><th>الكود</th><th>العميل</th><th>كراتين</th><th>CBM</th><th>إجمالي</th><th>مدفوع</th><th>متبقي</th></tr></thead><tbody>${rows.map(s => `<tr><td>${formatDate(s.createdAt)}</td><td>${esc(s.code)}</td><td>${esc(s.customerName || "-")}</td><td>${s.totalCartons}</td><td>${fmt(s.totalCbm)}</td><td>${money(s.totalPrice)}</td><td>${money(s.paidAmount)}</td><td>${money(s.remaining)}</td></tr>`).join("") || `<tr><td colspan="8">لا توجد بيانات</td></tr>`}</tbody></table></div></div>`;
-  }
-
-  function modal(title, html, large=true){
-    const back = $("modalBackdrop"), box = $("modalBox"), body = $("modalBody"), titleEl = $("modalTitle");
-    if (!back || !box || !body) return;
-    if (titleEl) titleEl.textContent = title;
-    box.classList.toggle("large", !!large);
-    body.innerHTML = html;
-    back.classList.add("show");
-    const close = $("modalCloseBtn");
-    if (close) close.onclick = closeModal;
-  }
-
-  function closeModal(){
-    $("modalBackdrop")?.classList.remove("show");
-    $("modalBox")?.classList.remove("large");
-  }
-
-  function ensureExportLoading(){
-    let el = $("shipExportLoading");
-    if (!el) {
-      document.body.insertAdjacentHTML("beforeend", `<div id="shipExportLoading" class="ship-export-loading"><div class="ship-export-loading-card"><div class="ship-export-spinner"></div><div id="shipExportLoadingText">جاري تجهيز الملف...</div></div></div>`);
-      el = $("shipExportLoading");
-    }
-    return el;
-  }
-
-  function showExportLoading(text="جاري تجهيز الملف..."){
-    const el = ensureExportLoading();
-    const t = $("shipExportLoadingText");
-    if (t) t.textContent = text;
-    el.classList.add("show");
-  }
-
-  function hideExportLoading(){
-    $("shipExportLoading")?.classList.remove("show");
-  }
-
-  function openReport(type="detailed", rows=filteredShipments()){
-    const html = type === "summary" ? buildSummaryReport(rows) : buildDetailedReport(rows);
-    modal(type === "summary" ? "تقرير شامل للشحنات" : "تقرير تفصيلي للشحنات", `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px" class="no-print"><button id="shipModalPdf" class="danger-btn" type="button"><i class="fa-solid fa-file-pdf"></i> PDF</button><button id="shipModalImage" class="success-btn" type="button"><i class="fa-solid fa-image"></i> صورة</button><button id="shipModalPrint" class="ghost-btn" type="button"><i class="fa-solid fa-print"></i> طباعة</button><button id="shipModalWa" class="ghost-btn" type="button"><i class="fa-brands fa-whatsapp"></i> واتس اب</button></div><div id="shipReportPreview">${html}</div>`, true);
-    $("shipModalPdf").onclick = () => exportPdf(type, rows);
-    $("shipModalImage").onclick = () => exportImage(type, rows);
-    $("shipModalPrint").onclick = () => printReport(type, rows);
-    $("shipModalWa").onclick = () => shareWhatsapp(rows);
-  }
-
-  async function renderReportOffscreen(type, rows){
-    const holder = document.createElement("div");
-    holder.style.position = "fixed";
-    holder.style.right = "-99999px";
-    holder.style.top = "0";
-    holder.style.background = "#fff";
-    holder.innerHTML = type === "summary" ? buildSummaryReport(rows) : buildDetailedReport(rows);
-    document.body.appendChild(holder);
-    await wait(120);
-    return holder;
-  }
-
-  async function exportImage(type="detailed", rows=filteredShipments()){
-    if (!window.html2canvas) return toast("مكتبة الصور لم تحمل بعد");
-    showExportLoading("جاري تجهيز الصورة...");
-    let holder = null;
-    try{
-      await wait(60);
-      holder = await renderReportOffscreen(type, rows);
-      const canvas = await html2canvas(holder.querySelector(".ship-report-page"), {scale:2, backgroundColor:"#ffffff", useCORS:true});
-      const a = document.createElement("a");
-      a.download = `${type === "summary" ? "summary" : "detailed"}-shipments-${dateKey(Date.now())}.png`;
-      a.href = canvas.toDataURL("image/png");
-      a.click();
-      toast("تم تنزيل صورة التقرير");
-    }catch(e){ console.error(e); toast("تعذر تنزيل الصورة"); }
-    finally{ if (holder) holder.remove(); hideExportLoading(); }
-  }
-
-  async function exportPdf(type="detailed", rows=filteredShipments()){
-    if (!window.html2canvas || !window.jspdf?.jsPDF) return toast("مكتبة PDF لم تحمل بعد");
-    showExportLoading("جاري تجهيز PDF...");
-    let holder = null;
-    try{
-      await wait(60);
-      holder = await renderReportOffscreen(type, rows);
-      const el = holder.querySelector(".ship-report-page");
-      const canvas = await html2canvas(el, {scale:2, backgroundColor:"#ffffff", useCORS:true});
-      const pdf = new window.jspdf.jsPDF("p", "mm", "a4");
-      const pageW = 210, pageH = 297;
-      const imgH = canvas.height * pageW / canvas.width;
-      const data = canvas.toDataURL("image/png");
-      let heightLeft = imgH;
-      let pos = 0;
-      pdf.addImage(data, "PNG", 0, pos, pageW, imgH);
-      heightLeft -= pageH;
-      while (heightLeft > 0){
-        pos = heightLeft - imgH;
-        pdf.addPage();
-        pdf.addImage(data, "PNG", 0, pos, pageW, imgH);
-        heightLeft -= pageH;
-      }
-      pdf.save(`${type === "summary" ? "summary" : "detailed"}-shipments-${dateKey(Date.now())}.pdf`);
-      toast("تم تنزيل PDF");
-    }catch(e){ console.error(e); toast("تعذر تنزيل PDF"); }
-    finally{ if (holder) holder.remove(); hideExportLoading(); }
-  }
-
-  function printReport(type="detailed", rows=filteredShipments()){
-    const area = $("printArea");
-    if (!area) return toast("منطقة الطباعة غير موجودة");
-    area.innerHTML = type === "summary" ? buildSummaryReport(rows) : buildDetailedReport(rows);
-    area.style.display = "block";
-    setTimeout(() => { window.print(); setTimeout(() => { area.style.display = "none"; area.innerHTML = ""; }, 600); }, 100);
-  }
-
-  async function exportExcel(rows=filteredShipments()){
-    if (!window.XLSX) return toast("مكتبة Excel لم تحمل بعد");
-    showExportLoading("جاري تجهيز Excel...");
-    try{
-      await wait(60);
-      const summary = rows.map(s => ({
-        "التاريخ": formatDate(s.createdAt), "كود الشحن": s.code, "العميل": s.customerName || "", "الكراتين": s.totalCartons, "CBM": s.totalCbm, "سعر CBM": s.cbmPrice, "إجمالي السعر": s.totalPrice, "المدفوع": s.paidAmount, "المتبقي": s.remaining, "طريقة الدفع": shipPaymentLabel(s), "حساب التحويل": s.paymentAccountName || "", "الحالة": s.paymentStatus, "ملاحظات": s.notes || ""
-      }));
-      const details = [];
-      rows.forEach(s => s.cartons.forEach((c,i) => { const l = calcLine(c); details.push({"كود الشحن":s.code,"العميل":s.customerName || "","#":i+1,"الطول سم":l.length,"العرض سم":l.width,"الارتفاع سم":l.height,"العدد":l.qty,"حجم الكرتونة م3":l.unitCbm,"إجمالي م3":l.totalCbm}); }));
-      const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(summary), "الشحنات");
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(details), "تفصيلي الكراتين");
-      XLSX.writeFile(wb, `shipments-${dateKey(Date.now())}.xlsx`);
-      toast("تم تنزيل ملف Excel");
-    }catch(e){ console.error(e); toast("تعذر تنزيل Excel"); }
-    finally{ hideExportLoading(); }
-  }
-
-  function whatsappText(rows=filteredShipments()){
-    const t = totals(rows);
-    const lines = [`تقرير الشحنات - ${shopName()}`, `عدد الشحنات: ${t.count}`, `مجموع الكراتين: ${t.cartons}`, `مجموع CBM: ${fmt(t.cbm)}`, `إجمالي السعر: ${money(t.sales)}`, `المدفوع: ${money(t.paid)}`, `دفع كاش: ${money(t.cash)}`, `تحويلات: ${money(t.bank)}`, `المتبقي: ${money(t.remaining)}`, "", "تفاصيل:"];
-    rows.slice(0, 35).forEach((s,i) => lines.push(`${i+1}) ${s.code} - ${s.customerName || "بدون اسم"} - ${s.totalCartons} كرتون - ${fmt(s.totalCbm)} CBM - ${money(s.totalPrice)} - ${shipPaymentShortLabel(s)} - متبقي ${money(s.remaining)}`));
-    if (rows.length > 35) lines.push(`... و ${rows.length - 35} شحنة أخرى`);
-    return lines.join("\n");
-  }
-
-  function shareWhatsapp(rows=filteredShipments()){
-    const text = whatsappText(rows);
-    if (navigator.share) {
-      navigator.share({text}).catch(() => {});
-      return;
-    }
-    window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank");
-  }
-
-  async function deleteShipment(id){
-    const s = st().shipments.find(x => x.id === id);
-    if (!s) return;
-    if (!confirm(`حذف الشحنة ${s.code}؟`)) return;
-    st().shipments = st().shipments.filter(x => x.id !== id);
-    saveLocalShipments();
-    await deleteRemoteShipment(id);
-    renderShipmentsPage();
-    toast("تم حذف الشحنة");
-  }
-
-  function bindEvents(){
-    if (window.__oskarShippingBound) return;
-    window.__oskarShippingBound = true;
-
-    document.addEventListener("click", async (ev) => {
-      const shipNav = ev.target.closest("[data-ship-page]");
-      if (shipNav) { ev.preventDefault(); ev.stopPropagation(); shipSwitchPage(shipNav.dataset.shipPage); return; }
-
-      const shipFolder = ev.target.closest("[data-ship-folder]");
-      if (shipFolder) { ev.preventDefault(); activeShipFolder = shipFolder.dataset.shipFolder || "all"; renderShipmentsPage(); return; }
-
-      if (ev.target.closest("#shipNewBtn")) { ev.preventDefault(); resetDraft(); return; }
-      if (ev.target.closest("#shipApplyCountBtn")) { ev.preventDefault(); applyCount(); return; }
-      if (ev.target.closest("#shipAddCartonBtn")) { ev.preventDefault(); readCartonsFromDom(); draft.cartons.push({ id: uid("carton"), length:"", width:"", height:"", qty:1 }); renderCalcPage(); return; }
-
-      const addAfter = ev.target.closest("[data-carton-add-after]");
-      if (addAfter) {
-        ev.preventDefault();
-        readCartonsFromDom();
-        const i = Number(addAfter.dataset.cartonAddAfter);
-        draft.cartons.splice(i + 1, 0, { id: uid("carton"), length:"", width:"", height:"", qty:1 });
-        renderCalcPage();
-        return;
-      }
-
-      const repeat = ev.target.closest("[data-carton-repeat]");
-      if (repeat) { ev.preventDefault(); readCartonsFromDom(); const i = Number(repeat.dataset.cartonRepeat); const base = draft.cartons[i] || {}; draft.cartons.splice(i+1, 0, {...base, id:uid("carton")}); renderCalcPage(); return; }
-
-      const remove = ev.target.closest("[data-carton-remove]");
-      if (remove) { ev.preventDefault(); readCartonsFromDom(); if (draft.cartons.length <= 1) return toast("يجب ترك كرتونة واحدة على الأقل"); draft.cartons.splice(Number(remove.dataset.cartonRemove), 1); renderCalcPage(); return; }
-
-      const view = ev.target.closest("[data-ship-view]");
-      if (view) { ev.preventDefault(); const s = st().shipments.find(x => x.id === view.dataset.shipView); if (s) openReport("detailed", [s]); return; }
-      const edit = ev.target.closest("[data-ship-edit]");
-      if (edit) { ev.preventDefault(); const s = st().shipments.find(x => x.id === edit.dataset.shipEdit); if (s) setDraftFromShipment(s); return; }
-      const del = ev.target.closest("[data-ship-del]");
-      if (del) { ev.preventDefault(); await deleteShipment(del.dataset.shipDel); return; }
-      const wa = ev.target.closest("[data-ship-wa]");
-      if (wa) { ev.preventDefault(); const s = st().shipments.find(x => x.id === wa.dataset.shipWa); if (s) shareWhatsapp([s]); return; }
-
-      if (ev.target.closest("#shipSummaryReportBtn")) { ev.preventDefault(); openReport("summary"); return; }
-      if (ev.target.closest("#shipDetailedReportBtn")) { ev.preventDefault(); openReport("detailed"); return; }
-      if (ev.target.closest("#shipExcelBtn")) { ev.preventDefault(); exportExcel(); return; }
-      if (ev.target.closest("#shipPdfBtn")) { ev.preventDefault(); exportPdf("detailed"); return; }
-      if (ev.target.closest("#shipImageBtn")) { ev.preventDefault(); exportImage("detailed"); return; }
-      if (ev.target.closest("#shipWhatsappBtn")) { ev.preventDefault(); shareWhatsapp(); return; }
-    }, true);
-
-    document.addEventListener("input", (ev) => {
-      if (ev.target.closest("#shipCartonsList") || ev.target.id === "shipCbmPrice") updateCalcSummary();
-      if (ev.target.id === "shipCode") autoFillShipCustomer(false);
-      if (["shipSearch","shipDateFrom","shipDateTo"].includes(ev.target.id)) renderShipmentsPage();
-    });
-
-    document.addEventListener("change", (ev) => {
-      if (ev.target.id === "shipCartonsCount") applyCount();
-      if (ev.target.id === "shipCode") autoFillShipCustomer(false);
-      if (["shipSort","shipPeriod","shipDateFrom","shipDateTo"].includes(ev.target.id)) renderShipmentsPage();
-    });
-
-    document.addEventListener("submit", (ev) => {
-      if (ev.target.id === "shippingCalcForm"){
-        ev.preventDefault();
-        const d = collectDraft();
-        if (!validateDraft(d)) return;
-        openPaymentModal(d);
-      }
-    });
-
-    window.addEventListener("online", () => { loadRemoteShipments().then(syncPendingShipments); });
-  }
-
-  function patchRenderAll(){
-    const old = window.renderAll;
-    if (typeof old === "function" && !old.__shippingWrapped){
-      const wrapped = function(){
-        const out = old.apply(this, arguments);
-        setTimeout(() => { ensureNav(); ensurePages(); renderCalcPage(); renderShipmentsPage(); }, 80);
-        return out;
-      };
-      wrapped.__shippingWrapped = true;
-      window.renderAll = wrapped;
-    }
-  }
-
-  async function init(){
-    for (let i=0;i<120;i++){
-      if (window.state && $("sidebar") && document.querySelector("main.main")) break;
-      await wait(100);
-    }
-    ensureStyles();
-    ensureNav();
-    ensurePages();
-    applyShippingPermissionsUI();
-    loadLocalShipments();
-    bindEvents();
-    patchRenderAll();
-    renderCalcPage();
-    renderShipmentsPage();
-    await loadRemoteShipments();
-    await syncPendingShipments();
-    setInterval(() => { ensureNav(); ensurePages(); applyShippingPermissionsUI(); renderShipmentsPage(); }, 3000);
-    console.log("[oskar-shipping-cbm] ready", PATCH_VERSION);
-  }
-
-  init();
-})();
-</script>
-
-
-<script id="oskar-shipping-permissions-final-fix-2026-05-03">
-(function(){
-  "use strict";
-
-  var SHIPPING_PERMISSION_PAGES = [
-    { id: "shippingCalc", label: "حاسبة طرود الشحن", icon: "fa-calculator" },
-    { id: "shippingShipments", label: "الشحنات", icon: "fa-boxes-packing" }
-  ];
-
-  function esc(v){
-    return String(v == null ? "" : v).replace(/[&<>"']/g, function(c){
-      return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c];
-    });
-  }
-
-  function addPermissionCards(){
-    var grids = document.querySelectorAll("#employeePermissionsGrid, .employee-grid, .oskar-perm-grid");
-    grids.forEach(function(grid){
-      if (!grid) return;
-      var isOskar = grid.classList.contains("oskar-perm-grid");
-      var cardClass = isOskar ? "oskar-perm" : "perm-card";
-      var checkClass = isOskar ? "oskarPerm" : "employee-permission-check";
-
-      SHIPPING_PERMISSION_PAGES.forEach(function(page){
-        if (grid.querySelector('input[value="' + page.id + '"]')) return;
-        var label = document.createElement("label");
-        label.className = cardClass;
-        label.innerHTML =
-          '<input type="checkbox" value="' + esc(page.id) + '" class="' + checkClass + '">' +
-          '<span><i class="fa-solid ' + esc(page.icon) + '"></i> ' + esc(page.label) + '</span>';
-        grid.appendChild(label);
-      });
-    });
-  }
-
-  function currentUser(){
-    return window.state && window.state.auth ? window.state.auth.user : null;
-  }
-
-  function canOpen(pageId){
-    var user = currentUser();
-    if (!user) return true;
-    var perms = Array.isArray(user.permissions) ? user.permissions : [];
-    if (user.role === "admin" || perms.indexOf("__admin__") >= 0) return true;
-    return perms.indexOf(pageId) >= 0;
-  }
-
-  function applyShippingVisibility(){
-    document.querySelectorAll("[data-ship-page]").forEach(function(el){
-      var page = el.dataset.shipPage;
-      el.classList.toggle("auth-hidden", !canOpen(page));
-    });
-  }
-
-  function refresh(){
-    addPermissionCards();
-    applyShippingVisibility();
-  }
-
-  var observer = new MutationObserver(function(){ refresh(); });
-  observer.observe(document.documentElement, { childList:true, subtree:true });
-  document.addEventListener("click", function(){ setTimeout(refresh, 60); }, true);
-  window.addEventListener("load", function(){ refresh(); setInterval(refresh, 1500); });
-  refresh();
+  function slowSyncIcon(){
+    var btn = document.getElementById("syncNowBtn");
+    if(!btn) return;
+    var icon = btn.querySelector("i");
+    if(icon) icon.style.setProperty("animation-duration", "1.6s", "important");
+  }
+  if(document.readyState === "loading") document.addEventListener("DOMContentLoaded", slowSyncIcon, {once:true});
+  else slowSyncIcon();
+  document.addEventListener("click", function(){ setTimeout(slowSyncIcon, 60); }, true);
+  setInterval(slowSyncIcon, 1200);
 })();
 </script>
 

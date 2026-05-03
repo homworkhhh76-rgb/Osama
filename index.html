@@ -2073,7 +2073,14 @@
               <option value="custom">تاريخ محدد</option>
             </select>
 
-            <input id="invoiceCustomDate" type="date" class="input" style="display:none">
+            <input id="invoiceCustomDate" type="date" class="input" style="display:none" title="تاريخ محدد سريع">
+
+            <div id="invoiceCustomRangeBox" class="full-row" style="display:none;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px">
+              <div><label class="field-label">من تاريخ</label><input id="invoiceDateFrom" type="date" class="input"></div>
+              <div><label class="field-label">إلى تاريخ</label><input id="invoiceDateTo" type="date" class="input"></div>
+              <div><label class="field-label">من تاريخ ووقت</label><input id="invoiceDateTimeFrom" type="datetime-local" class="input"></div>
+              <div><label class="field-label">إلى تاريخ ووقت</label><input id="invoiceDateTimeTo" type="datetime-local" class="input"></div>
+            </div>
 
             <select id="invoiceStatusFilter" class="select">
               <option value="all">كل الحالات</option>
@@ -6001,8 +6008,28 @@
       if ($("invoiceCustomDate")) {
         $("invoiceCustomDate").style.display = period === "custom" ? "block" : "none";
       }
+      if ($("invoiceCustomRangeBox")) {
+        $("invoiceCustomRangeBox").style.display = period === "custom" ? "grid" : "none";
+      }
+      const readRangeTs = (id, endOfDay = false) => {
+        const v = String($(id)?.value || "").trim();
+        if (!v) return endOfDay ? Infinity : 0;
+        const ts = /^\d{4}-\d{2}-\d{2}$/.test(v)
+          ? new Date(v + (endOfDay ? "T23:59:59" : "T00:00:00")).getTime()
+          : new Date(v).getTime();
+        return Number.isFinite(ts) ? ts : (endOfDay ? Infinity : 0);
+      };
+      const rangeFrom = period === "custom" ? Math.max(readRangeTs("invoiceDateFrom", false), readRangeTs("invoiceDateTimeFrom", false)) : 0;
+      const rangeToDate = readRangeTs("invoiceDateTo", true);
+      const rangeToTime = readRangeTs("invoiceDateTimeTo", true);
+      const rangeTo = period === "custom" ? Math.min(rangeToDate, rangeToTime) : Infinity;
 
       return periodFilter(state.invoices, period, "createdAt", custom)
+        .filter(inv => {
+          if (period !== "custom") return true;
+          const time = Number(inv.createdAt || 0);
+          return time >= rangeFrom && time <= rangeTo;
+        })
         .filter(inv => {
           const invoiceNumber = String(inv.number || "").toLowerCase();
           const invoiceBarcode = getInvoiceBarcodeValue(inv).toLowerCase();
@@ -7362,6 +7389,11 @@
                 <label class="field-label">الإجمالي</label>
                 <input class="input" value="${money(totals.total)}" disabled>
               </div>
+
+              <div class="full-row">
+                <label class="field-label">ملاحظات تطبيق لاحق</label>
+                <textarea id="payLaterNotes" class="textarea" placeholder="ملاحظة تظهر في التقرير التفصيلي فقط..."></textarea>
+              </div>
             </div>
 
             <button class="gold-btn" type="submit" style="width:100%;margin-top:16px">
@@ -7389,7 +7421,8 @@
             customerName: customer.name,
             customerPhone: customer.phone,
             paymentAccountId: $("payAccountId").value,
-            dueDate: $("payDueDate").value || ""
+            dueDate: $("payDueDate").value || "",
+            paymentNotes: ($("payLaterNotes")?.value || "").trim()
           });
         };
 
@@ -7613,6 +7646,7 @@
         dueDate: payment.dueDate || "",
         status: payment.status || "unpaid",
         notes: "",
+        paymentNotes: payment.paymentMethod === "later_app" ? String(payment.paymentNotes || "").trim() : "",
         items,
         subtotal: totals.subtotal,
         discount: totals.discount,
@@ -8834,9 +8868,9 @@
 
     async function downloadElementImage(element, filename) {
       const canvas = await html2canvas(element, {
-        scale: 2,
+        scale: 1.25,
         useCORS: true,
-        allowTaint: true,
+        allowTaint: false,
         backgroundColor: "#ffffff"
       });
 
@@ -8848,9 +8882,9 @@
 
     async function downloadElementPdf(element, filename) {
       const canvas = await html2canvas(element, {
-        scale: 2,
+        scale: 1.25,
         useCORS: true,
-        allowTaint: true,
+        allowTaint: false,
         backgroundColor: "#ffffff"
       });
 
@@ -9294,6 +9328,7 @@
               <td>-</td>
               <td>${money(0)}</td>
               <td>${money(inv.total)}</td>
+              <td>${inv.paymentMethod === "later_app" ? escapeHtml(inv.paymentNotes || "-") : "-"}</td>
             </tr>
           `);
         } else {
@@ -9311,6 +9346,7 @@
                 <td>${escapeHtml(item.qtyText || item.qty || "1")}</td>
                   <td>${money(item.price)}</td>
                 <td>${money(item.total)}</td>
+                <td>${inv.paymentMethod === "later_app" ? escapeHtml(inv.paymentNotes || "-") : "-"}</td>
               </tr>
             `);
           });
@@ -9332,10 +9368,11 @@
               <th style="border:1px solid #e5e7eb;background:#eff6ff;padding:7px;font-size:10px">الكمية</th>
               <th style="border:1px solid #e5e7eb;background:#eff6ff;padding:7px;font-size:10px">السعر</th>
               <th style="border:1px solid #e5e7eb;background:#eff6ff;padding:7px;font-size:10px">الإجمالي</th>
+              <th style="border:1px solid #e5e7eb;background:#eff6ff;padding:7px;font-size:10px">ملاحظات تطبيق لاحق</th>
             </tr>
           </thead>
           <tbody>
-            ${rows.join("") || `<tr><td colspan="11" style="text-align:center;padding:15px">لا توجد بيانات</td></tr>`}
+            ${rows.join("") || `<tr><td colspan="12" style="text-align:center;padding:15px">لا توجد بيانات</td></tr>`}
           </tbody>
         </table>
       `);
@@ -10610,6 +10647,10 @@
       $("invoicePeriod").onchange = renderInvoices;
       $("invoiceStatusFilter").onchange = renderInvoices;
       $("invoiceCustomDate").onchange = renderInvoices;
+      ["invoiceDateFrom","invoiceDateTo","invoiceDateTimeFrom","invoiceDateTimeTo"].forEach(id => {
+        const el = $(id);
+        if (el) { el.onchange = renderInvoices; el.oninput = renderInvoices; }
+      });
 
       $("debtsSearch").oninput = renderDebts;
       $("debtsSort").onchange = renderDebts;
@@ -15154,6 +15195,7 @@
       remaining,
       paymentStatus: remaining <= 0 ? "paid" : (paid > 0 ? "partial" : "later"),
       notes: String(raw.notes || ""),
+      paymentNotes: String(raw.paymentNotes || raw.laterNotes || ""),
       createdAt: Number(raw.createdAt || Date.now()),
       updatedAt: Number(raw.updatedAt || raw.createdAt || Date.now()),
       syncPending: !!raw.syncPending
@@ -15556,7 +15598,7 @@
         .ship-report-brand{text-align:right!important;min-width:0!important;overflow:hidden!important}.ship-report-brand h2{font-size:18px!important;margin:0!important;line-height:1.45!important;white-space:normal!important;overflow-wrap:anywhere!important;word-break:break-word!important}.ship-report-brand p{margin:3px 0 0!important;font-size:11px!important;white-space:normal!important}.ship-report-count-line{margin-top:8px;color:#4b5563;font-weight:800;font-size:11px!important}.ship-report-count-line b{font-size:15px;color:#111827}
         .ship-report-logo-holder{width:auto!important;min-width:0!important;display:flex!important;align-items:center!important;justify-content:center!important}.ship-report-logo-holder:empty{display:none!important}.ship-report-logo{width:66px!important;height:66px!important;margin:0!important;object-fit:contain!important;background:#fff!important}
         .ship-report-meta{width:auto!important;min-width:0!important;text-align:left!important;line-height:1.55!important;overflow:hidden!important}.ship-report-label{text-align:left!important;font-size:11px!important}.ship-report-total-box b{white-space:normal!important;overflow-wrap:anywhere!important}.ship-report-grand-title{font-size:15px;font-weight:900;margin:0 0 10px;color:#0f172a;display:flex;align-items:center;gap:7px}.ship-report-grand{background:#f8fafc!important;border-width:2px!important}
-        .ship-date-range-box{display:none;grid-column:1/-1;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.ship-date-range-box.show{display:grid}.ship-date-range-box>div{min-width:0}.ship-customer-info{grid-column:1/-1;border:1px solid #bfdbfe;background:#eff6ff;border-radius:18px;padding:12px;display:none}.ship-customer-info.show{display:block}.ship-customer-info-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.ship-customer-info-item{background:#fff;border:1px solid #dbeafe;border-radius:14px;padding:8px}.ship-customer-info-item span{display:block;color:#64748b;font-size:11px;font-weight:900}.ship-customer-info-item b{display:block;margin-top:2px;color:#0f172a;font-size:13px;font-weight:900;white-space:normal;overflow-wrap:anywhere}.ship-customer-actions{display:flex;gap:6px;flex-wrap:wrap}.ship-export-loading{position:fixed;inset:0;z-index:999999;background:rgba(15,23,42,.30);backdrop-filter:blur(4px);display:none;align-items:center;justify-content:center;font-family:Cairo,Arial,sans-serif;direction:rtl}.ship-export-loading.show{display:flex}.ship-export-loading-card{background:#fff;border:1px solid #e2e8f0;border-radius:22px;box-shadow:0 18px 50px rgba(15,23,42,.20);padding:16px 20px;min-width:210px;text-align:center;font-weight:900;color:#0f172a}.ship-export-spinner{width:42px;height:42px;border-radius:999px;border:4px solid #e2e8f0;border-top-color:#2563eb;margin:0 auto 10px;animation:shipSpin 1s linear infinite}@keyframes shipSpin{to{transform:rotate(360deg)}}
+        .ship-date-range-box{display:none;grid-column:1/-1;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}.ship-date-range-box.show{display:grid}.ship-date-range-box>div{min-width:0}.ship-customer-info{grid-column:1/-1;border:1px solid #bfdbfe;background:#eff6ff;border-radius:18px;padding:12px;display:none}.ship-customer-info.show{display:block}.ship-customer-info-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.ship-customer-info-item{background:#fff;border:1px solid #dbeafe;border-radius:14px;padding:8px}.ship-customer-info-item span{display:block;color:#64748b;font-size:11px;font-weight:900}.ship-customer-info-item b{display:block;margin-top:2px;color:#0f172a;font-size:13px;font-weight:900;white-space:normal;overflow-wrap:anywhere}.ship-customer-actions{display:flex;gap:6px;flex-wrap:wrap}.ship-export-loading{position:fixed;inset:0;z-index:999999;background:rgba(15,23,42,.30);backdrop-filter:blur(4px);display:none;align-items:center;justify-content:center;font-family:Cairo,Arial,sans-serif;direction:rtl}.ship-export-loading.show{display:flex}.ship-export-loading-card{background:#fff;border:1px solid #e2e8f0;border-radius:22px;box-shadow:0 18px 50px rgba(15,23,42,.20);padding:16px 20px;min-width:210px;text-align:center;font-weight:900;color:#0f172a}.ship-export-spinner{width:42px;height:42px;border-radius:999px;border:4px solid #e2e8f0;border-top-color:#2563eb;margin:0 auto 10px;animation:shipSpin 1s linear infinite}@keyframes shipSpin{to{transform:rotate(360deg)}}
         @media(max-width:720px){.ship-report-page .ship-report-head{grid-template-columns:minmax(0,1fr) 122px!important;gap:8px!important;padding:12px!important}.ship-report-brand-wrap{gap:8px!important}.ship-report-meta{font-size:10px!important}.ship-report-brand h2{font-size:13.5px!important;line-height:1.45!important}.ship-report-logo{width:46px!important;height:46px!important}.ship-customer-info-grid{grid-template-columns:1fr}.ship-date-range-box{grid-template-columns:1fr}}
         @media print{#printArea .ship-report-page{width:100%!important;max-width:none!important;padding:12mm!important}.ship-card{break-inside:avoid;page-break-inside:avoid}}
       </style>
@@ -15681,6 +15723,8 @@
             <select id="shipSort" class="select"><option value="date_desc">الأحدث تاريخاً</option><option value="date_asc">الأقدم تاريخاً</option><option value="code_asc">حسب الكود تصاعدي</option><option value="code_desc">حسب الكود تنازلي</option></select>
             <select id="shipPeriod" class="select"><option value="all">كل السجل</option><option value="today">اليوم</option><option value="week">أسبوع</option><option value="month">شهر</option><option value="custom">من تاريخ إلى تاريخ</option></select>
             <div id="shipDateRangeBox" class="ship-date-range-box">
+              <div><label class="field-label">من تاريخ</label><input id="shipDateOnlyFrom" type="date" class="input" title="من تاريخ"></div>
+              <div><label class="field-label">إلى تاريخ</label><input id="shipDateOnlyTo" type="date" class="input" title="إلى تاريخ"></div>
               <div><label class="field-label">من تاريخ ووقت</label><input id="shipDateFrom" type="datetime-local" class="input" title="من تاريخ ووقت"></div>
               <div><label class="field-label">إلى تاريخ ووقت</label><input id="shipDateTo" type="datetime-local" class="input" title="إلى تاريخ ووقت"></div>
             </div>
@@ -15869,6 +15913,7 @@
             <div id="shipPartialMethodBox"><label class="field-label">طريقة الدفعة الآن عند الدفع لاحقاً</label><select id="shipPartialPayMethod" class="select"><option value="cash" ${partialMethodDefault !== "bank" ? "selected" : ""}>دفعة كاش</option><option value="bank" ${partialMethodDefault === "bank" ? "selected" : ""}>دفعة تحويل بنكي / تطبيق</option></select></div>
             <div id="shipPartialAccountBox"><label class="field-label">حساب دفعة التحويل</label><select id="shipPartialPayAccount" class="select">${accountOptions(old?.partialPaymentAccountId || old?.paymentAccountId || "")}</select></div>
             <div><label class="field-label">الدفعة المدفوعة الآن</label><input id="shipPaidAmount" class="input" type="number" inputmode="decimal" min="0" step="0.001" value="${defaultPaidValue}"></div>
+            <div id="shipPaymentNotesBox" class="full-row"><label class="field-label">ملاحظات الدفع لاحقاً</label><textarea id="shipPaymentNotes" class="textarea" placeholder="ملاحظة تظهر في التقرير التفصيلي فقط...">${esc(old?.paymentNotes || "")}</textarea></div>
             <div class="full-row"><div class="ship-cbm-sum-box"><span>المتبقي على العميل</span><b id="shipRemainingPreview" style="color:#dc2626">${money(Math.max(0, d.total - num(defaultPaidValue)))}</b></div></div>
           </div>
           <button class="primary-btn" type="submit" style="width:100%;margin-top:14px"><i class="fa-solid fa-floppy-disk"></i> حفظ الشحنة</button>
@@ -15884,6 +15929,7 @@
       }
       if ($("shipPayAccountBox")) $("shipPayAccountBox").style.display = method === "bank" ? "block" : "none";
       if ($("shipPartialMethodBox")) $("shipPartialMethodBox").style.display = method === "later" ? "block" : "none";
+      if ($("shipPaymentNotesBox")) $("shipPaymentNotesBox").style.display = method === "later" ? "block" : "none";
       const partialMethod = $("shipPartialPayMethod")?.value || "cash";
       const paid = Math.max(0, num(paidInput?.value, 0));
       if ($("shipPartialAccountBox")) $("shipPartialAccountBox").style.display = (method === "later" && partialMethod === "bank" && paid > 0) ? "block" : "none";
@@ -15944,6 +15990,7 @@
         partialPaymentAccountName,
         paidAmount: paid,
         notes: d.notes,
+        paymentNotes: method === "later" ? String($("shipPaymentNotes")?.value || "").trim() : "",
         createdAt: old?.createdAt || now,
         updatedAt: now,
         syncPending: true
@@ -15984,8 +16031,8 @@
     if (period === "week") from = week;
     if (period === "month") from = month;
     if (period === "custom"){
-      from = readShipDateTime("shipDateFrom", false);
-      to = readShipDateTime("shipDateTo", true);
+      from = Math.max(readShipDateTime("shipDateOnlyFrom", false), readShipDateTime("shipDateFrom", false));
+      to = Math.min(readShipDateTime("shipDateOnlyTo", true), readShipDateTime("shipDateTo", true));
     }
     const rows = (st().shipments || []).filter(s => {
       const time = Number(s.createdAt || 0);
@@ -16128,6 +16175,7 @@
             <div class="ship-report-total-box"><span>المتبقي</span><b style="color:#dc2626">${money(s.remaining)}</b></div>
           </div>
           <div class="ship-card-small" style="margin-top:8px">الدفع: ${shipPaymentLabel(s)}</div>
+          ${s.paymentMethod === "later" && s.paymentNotes ? `<div class="ship-card-small" style="margin-top:6px;color:#92400e;font-weight:900">ملاحظات الدفع لاحقاً: ${esc(s.paymentNotes)}</div>` : ""}
         </div>`;
     }).join("");
     return `
@@ -16304,7 +16352,7 @@
     try{
       holder = await renderReportOffscreen(type, rows);
       const el = holder.querySelector(".ship-report-page");
-      const canvas = await html2canvas(el, {scale:type === "summary" ? 1.55 : 1.35, backgroundColor:"#ffffff", useCORS:true, allowTaint:false, logging:false, imageTimeout:650, scrollX:0, scrollY:0});
+      const canvas = await html2canvas(el, {scale:type === "summary" ? 1.55 : 1.35, backgroundColor:"#ffffff", useCORS:true, allowTaint:false, logging:false, imageTimeout:350, scrollX:0, scrollY:0});
       const a = document.createElement("a");
       a.download = `${type === "summary" ? "summary" : "detailed"}-shipments-${dateKey(Date.now())}.png`;
       document.body.appendChild(a);
@@ -16338,7 +16386,7 @@
     try{
       holder = await renderReportOffscreen(type, rows);
       const el = holder.querySelector(".ship-report-page");
-      const canvas = await html2canvas(el, {scale:type === "summary" ? 1.45 : 1.25, backgroundColor:"#ffffff", useCORS:true, allowTaint:false, logging:false, imageTimeout:650, scrollX:0, scrollY:0});
+      const canvas = await html2canvas(el, {scale:type === "summary" ? 1.45 : 1.25, backgroundColor:"#ffffff", useCORS:true, allowTaint:false, logging:false, imageTimeout:350, scrollX:0, scrollY:0});
       const pdf = new window.jspdf.jsPDF("p", "mm", "a4");
       const pageW = 210, pageH = 297;
       const imgH = canvas.height * pageW / canvas.width;
@@ -16473,13 +16521,13 @@
       if (ev.target.id === "shipCode") autoFillShipCustomer(false);
       if (ev.target.id === "shipCustomerSearch") renderShipCustomersPage();
       if (ev.target.id === "shipCustomerIdNumber") ev.target.value = String(ev.target.value || "").replace(/\D/g, "").slice(0, 9);
-      if (["shipSearch","shipDateFrom","shipDateTo"].includes(ev.target.id)) renderShipmentsPage();
+      if (["shipSearch","shipDateOnlyFrom","shipDateOnlyTo","shipDateFrom","shipDateTo"].includes(ev.target.id)) renderShipmentsPage();
     });
 
     document.addEventListener("change", (ev) => {
       if (ev.target.id === "shipCartonsCount") applyCount();
       if (ev.target.id === "shipCode") autoFillShipCustomer(true);
-      if (["shipSort","shipPeriod","shipDateFrom","shipDateTo"].includes(ev.target.id)) renderShipmentsPage();
+      if (["shipSort","shipPeriod","shipDateOnlyFrom","shipDateOnlyTo","shipDateFrom","shipDateTo"].includes(ev.target.id)) renderShipmentsPage();
     });
 
     document.addEventListener("submit", (ev) => {
@@ -16517,7 +16565,7 @@
       await wait(100);
     }
     ensureStyles();
-    applyDefaultShippingLogoToApp();
+    /* شعار التطبيق يدار الآن من باتش الشعار المحلي النهائي ولا يتم فرض شعار الشحن الافتراضي */
     ensureNav();
     ensurePages();
     applyShippingPermissionsUI();
@@ -16626,13 +16674,27 @@
   function toast(msg,ms){ if(typeof window.toast === "function") return window.toast(msg,ms||2400); }
   function sanitizeSettings(s){
     s = { id:"main", ...(s || {}) };
-    s.logo = FIXED_LOGO;
-    s.logoMode = s.localLogo ? "local" : "fixed";
+    try{
+      const cached = localStorage.getItem("oskar_fast_logo_cache_src_v1") || "";
+      if (s.localLogo) {
+        s.logo = "";
+        s.logoMode = "local";
+        localStorage.setItem("oskar_fast_logo_cache_src_v1", s.localLogo);
+      } else {
+        s.logo = s.logo || cached || FIXED_LOGO;
+        s.logoMode = s.logo && s.logo !== FIXED_LOGO ? "url" : "fixed";
+      }
+    }catch(e){
+      if (!s.localLogo && !s.logo) s.logo = FIXED_LOGO;
+      s.logoMode = s.localLogo ? "local" : "fixed";
+    }
     return s;
   }
   function effectiveLogo(){
     const s = sanitizeSettings(window.state && window.state.settings ? window.state.settings : {});
-    return s.localLogo || FIXED_LOGO;
+    let cached = "";
+    try{ cached = localStorage.getItem("oskar_fast_logo_cache_src_v1") || ""; }catch(e){}
+    return s.localLogo || s.logo || cached || FIXED_LOGO;
   }
   function cleanupTrialAndBuy(){
     try{ trialKeys.forEach(k=>localStorage.removeItem(k)); }catch(e){}
@@ -16662,7 +16724,8 @@
   async function saveLocalLogoFromFile(file){
     if(!file || !window.state) return;
     const dataUrl = await new Promise((resolve,reject)=>{ const r=new FileReader(); r.onload=()=>resolve(String(r.result||"")); r.onerror=reject; r.readAsDataURL(file); });
-    window.state.settings = sanitizeSettings({ ...(window.state.settings||{}), localLogo:dataUrl, updatedAt:Date.now() });
+    window.state.settings = sanitizeSettings({ ...(window.state.settings||{}), localLogo:dataUrl, logo:"", logoMode:"local", updatedAt:Date.now() });
+    try{ localStorage.setItem("oskar_fast_logo_cache_src_v1", dataUrl); }catch(e){}
     if(typeof window.idbPut === "function") await window.idbPut("settings", window.state.settings);
     const input = $("settingLogoFile"); if(input) input.value = "";
     applyFixedLogo();
@@ -16670,7 +16733,8 @@
   }
   async function deleteLocalLogo(){
     if(!window.state) return;
-    window.state.settings = sanitizeSettings({ ...(window.state.settings||{}), localLogo:"", updatedAt:Date.now() });
+    try{ localStorage.removeItem("oskar_fast_logo_cache_src_v1"); }catch(e){}
+    window.state.settings = sanitizeSettings({ ...(window.state.settings||{}), localLogo:"", logo:FIXED_LOGO, logoMode:"fixed", updatedAt:Date.now() });
     if(typeof window.idbPut === "function") await window.idbPut("settings", window.state.settings);
     const input = $("settingLogoFile"); if(input) input.value = "";
     applyFixedLogo();
@@ -16692,7 +16756,7 @@
     if(window.enqueueSync && !window.enqueueSync.__oskarFixedLogoSafe){
       const old = window.enqueueSync;
       window.enqueueSync = function(action){
-        if(action && action.store === "settings" && action.data) action = { ...action, data: {...sanitizeSettings(action.data), localLogo:"", logoMode:"fixed"} };
+        if(action && action.store === "settings" && action.data) { const clean = sanitizeSettings(action.data); action = { ...action, data: {...clean, localLogo:"", logo: clean.localLogo ? "" : clean.logo, logoMode: clean.localLogo ? "local" : clean.logoMode} }; }
         return old.call(this, action);
       };
       window.enqueueSync.__oskarFixedLogoSafe = true;
@@ -16701,17 +16765,105 @@
       const oldSet = window.set;
       window.set = function(refObj, data){
         if(data && typeof data === "object" && ("shopName" in data || "logo" in data || "localLogo" in data) && (data.id === "main" || "currency" in data || "lowStock" in data)){
-          data = { ...sanitizeSettings(data), localLogo:"", logoMode:"fixed" };
+          const clean = sanitizeSettings(data);
+          data = { ...clean, localLogo:"", logo: clean.localLogo ? "" : clean.logo, logoMode: clean.localLogo ? "local" : clean.logoMode };
         }
         return oldSet.call(this, refObj, data);
       };
       window.set.__oskarFixedLogoSafe = true;
     }
   }
+  let __logoTickAt = 0;
   function tick(){ cleanupTrialAndBuy(); bindLocalLogoControls(); wrapCloudSaves(); applyFixedLogo(); }
+  function safeTick(){ const now = Date.now(); if(now - __logoTickAt < 650) return; __logoTickAt = now; tick(); }
+  if(document.readyState === "loading") document.addEventListener("DOMContentLoaded", safeTick, {once:true}); else safeTick();
+  new MutationObserver(safeTick).observe(document.documentElement, {childList:true,subtree:true});
+  setInterval(safeTick, 2800);
+})();
+</script>
+
+
+<style id="oskar-final-speed-logo-notes-fix-2026-05-03">
+  .section{content-visibility:auto;contain-intrinsic-size:1px 720px}
+  .section.active{content-visibility:visible}
+  .table-wrap{overscroll-behavior:auto;scrollbar-gutter:stable;will-change:scroll-position}
+  img.shop-logo,img.invoice-logo,img.oskar-thermal-logo,img.ship-report-logo{opacity:1!important;visibility:visible!important;background:#fff!important}
+  @media(max-width:720px){#invoiceCustomRangeBox{grid-template-columns:1fr 1fr!important}.ship-date-range-box{grid-template-columns:1fr 1fr!important}}
+</style>
+<script id="oskar-final-speed-logo-notes-fix-2026-05-03">
+(function(){
+  "use strict";
+  const $ = id => document.getElementById(id);
+  const $$ = sel => Array.from(document.querySelectorAll(sel));
+  const FALLBACK = window.OSKAR_FIXED_SITE_LOGO_URL || "";
+  const bad = src => { const v = String(src || "").trim(); return !v || /undefined|null|about:blank|blob:null/i.test(v); };
+  function bestLogo(){
+    const s = window.state?.settings || {};
+    let cached = "";
+    try{ cached = localStorage.getItem("oskar_fast_logo_cache_src_v1") || ""; }catch(e){}
+    return [s.localLogo, s.logoData, s.logoBase64, s.companyLogo, s.storeLogo, s.logoUrl, s.logo, cached, FALLBACK].find(x => !bad(x)) || "";
+  }
+  function applyLogo(){
+    const src = bestLogo();
+    if(!src) return;
+    ["topShopLogo","sideShopLogo","settingLogoPreview"].forEach(id => {
+      const img = $(id);
+      if(!img) return;
+      img.loading = "eager"; img.decoding = "async"; img.referrerPolicy = "no-referrer";
+      try{ img.fetchPriority = "high"; }catch(e){}
+      img.onerror = function(){ this.onerror = null; if(FALLBACK) this.src = FALLBACK; };
+      if (bad(img.getAttribute("src")) || img.src !== src) img.src = src;
+    });
+    $$("img.invoice-logo,img.oskar-thermal-logo,img.ship-report-logo,img.shop-logo").forEach(img => {
+      img.loading = "eager"; img.decoding = "async"; img.referrerPolicy = "no-referrer";
+      try{ img.fetchPriority = "high"; }catch(e){}
+      img.onerror = function(){ this.onerror = null; if(FALLBACK) this.src = FALLBACK; };
+      if (bad(img.getAttribute("src"))) img.src = src;
+    });
+  }
+  function bindLogoFile(){
+    const input = $("settingLogoFile");
+    if(!input || input.__oskarLocalLogoPriorityFinal) return;
+    input.__oskarLocalLogoPriorityFinal = true;
+    input.addEventListener("change", e => {
+      const file = e.target.files && e.target.files[0];
+      if(!file) return;
+      const r = new FileReader();
+      r.onload = async () => {
+        const dataUrl = String(r.result || "");
+        if(!dataUrl) return;
+        window.state = window.state || {};
+        window.state.settings = {id:"main", ...(window.state.settings || {}), localLogo:dataUrl, logo:"", logoMode:"local", updatedAt:Date.now()};
+        try{ localStorage.setItem("oskar_fast_logo_cache_src_v1", dataUrl); }catch(e){}
+        try{ if(typeof window.idbPut === "function") await window.idbPut("settings", window.state.settings); }catch(e){}
+        applyLogo();
+        if(typeof window.toast === "function") window.toast("تم اعتماد شعار الجهاز وحذف شعار الموقع من العرض");
+      };
+      r.readAsDataURL(file);
+    }, true);
+  }
+  function bindShipFilters(){
+    const ids = ["shipSort","shipPeriod","shipDateOnlyFrom","shipDateOnlyTo","shipDateFrom","shipDateTo","shipSearch"];
+    ids.forEach(id => {
+      const el = $(id);
+      if(!el || el.__oskarShipFilterFinal) return;
+      el.__oskarShipFilterFinal = true;
+      const fire = () => { try{ if(typeof window.renderShipmentsPage === "function") window.renderShipmentsPage(); }catch(e){} };
+      el.addEventListener("input", fire, true);
+      el.addEventListener("change", fire, true);
+      el.addEventListener("click", () => setTimeout(fire, 0), true);
+    });
+  }
+  let last = 0;
+  function tick(){
+    const now = Date.now();
+    if(now - last < 500) return;
+    last = now;
+    bindLogoFile(); bindShipFilters(); applyLogo();
+  }
   if(document.readyState === "loading") document.addEventListener("DOMContentLoaded", tick, {once:true}); else tick();
-  new MutationObserver(tick).observe(document.documentElement, {childList:true,subtree:true});
-  setInterval(tick, 900);
+  new MutationObserver(tick).observe(document.documentElement, {childList:true, subtree:true});
+  setInterval(tick, 2500);
 })();
 </script>
 

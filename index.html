@@ -3122,8 +3122,8 @@
       { id: "purchases", label: "المشتريات", icon: "fa-truck-ramp-box" },
       { id: "supplierPayments", label: "دفعات التجار", icon: "fa-hand-holding-dollar" },
       { id: "expenses", label: "المصروفات", icon: "fa-money-bill-wave" },
-      { id: "shippingCalc", label: "حاسبة الطرود", icon: "fa-calculator" },
-      { id: "shippingShipments", label: "سجل الشحنات", icon: "fa-boxes-packing" },
+      { id: "shippingCalc", label: "حاسبة طرود الشحن", icon: "fa-calculator" },
+      { id: "shippingShipments", label: "الشحنات", icon: "fa-boxes-packing" },
       { id: "reports", label: "التقارير", icon: "fa-chart-line" },
       { id: "settings", label: "الإعدادات", icon: "fa-gear" }
     ];
@@ -10894,7 +10894,7 @@
   function firebaseRoot(){ return window.FIREBASE_ROOT || window.CASHIER_FIREBASE_CONFIG?.firebaseRoot || 'cashier_units_pro_default'; }
   async function fetchSettings(){ try{ if(!navigator.onLine||!window.db||!window.ref||!window.get) return window.state?.settings; const snap=await window.get(window.ref(window.db, firebaseRoot()+"/settings/main")); if(snap&&snap.exists&&snap.exists()){ const remote=snap.val()||{}; window.state.settings={...(window.state.settings||{}),...remote,id:'main',localLogo:window.state?.settings?.localLogo||''}; if(typeof window.idbPut==='function') await window.idbPut('settings',window.state.settings); return window.state.settings; } }catch(e){console.warn('fetch settings failed',e)} return window.state?.settings; }
   async function saveSettings(){ if(!window.state) return; window.state.settings={...(window.state.settings||{}),id:'main',updatedAt:Date.now()}; if(typeof window.idbPut==='function') await window.idbPut('settings',window.state.settings); const safe={...window.state.settings,localLogo:'',logoMode:window.state.settings.logo?'url':'default'}; if(navigator.onLine&&window.db&&window.ref&&window.set){ await window.set(window.ref(window.db, firebaseRoot()+"/settings/main"), safe); } else if(typeof window.enqueueSync==='function'){ await window.enqueueSync({type:'set',store:'settings',itemId:'main',data:safe}); } }
-  function applyUi(){ const u=window.state?.auth?.user||null; const pill=$("authUserPill"); if(pill) pill.innerHTML=u?`<i class="fa-solid ${isAdmin()?'fa-user-shield':'fa-user'}"></i> ${escape(String(u.name||'مستخدم'))}`:`<i class="fa-solid fa-lock"></i> غير مسجل`; document.querySelectorAll('.nav-btn[data-page],.bottom-btn[data-page]').forEach(b=>{ const page=b.dataset.page; const ok=!!u&&(isAdmin()||(u.permissions||[]).includes(page)); b.classList.toggle('auth-hidden',!ok); }); const a=$("adminSecurityBox"); if(a)a.style.display=isAdmin()?'block':'none'; const e=$("employeesSettingsBox"); if(e)e.style.display=isAdmin()?'block':'none'; }
+  function applyUi(){ const u=window.state?.auth?.user||null; const pill=$("authUserPill"); if(pill) pill.innerHTML=u?`<i class="fa-solid ${isAdmin()?'fa-user-shield':'fa-user'}"></i> ${escape(String(u.name||'مستخدم'))}`:`<i class="fa-solid fa-lock"></i> غير مسجل`; document.querySelectorAll('.nav-btn[data-page],.bottom-btn[data-page],.nav-btn[data-ship-page],.bottom-btn[data-ship-page]').forEach(b=>{ const page=b.dataset.page||b.dataset.shipPage; const ok=!!u&&(isAdmin()||(u.permissions||[]).includes(page)); b.classList.toggle('auth-hidden',!ok); }); const a=$("adminSecurityBox"); if(a)a.style.display=isAdmin()?'block':'none'; const e=$("employeesSettingsBox"); if(e)e.style.display=isAdmin()?'block':'none'; if(typeof window.applyShippingPermissionsUI==='function'){try{window.applyShippingPermissionsUI();}catch{}} }
   function escape(s){return s.replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));}
   function ensureRecoveryUi(){
     if($("forgotAdminPasswordBtn")) return;
@@ -11764,6 +11764,8 @@
     { id:"purchases", label:"المشتريات", icon:"fa-truck-ramp-box" },
     { id:"supplierPayments", label:"دفعات التجار", icon:"fa-hand-holding-dollar" },
     { id:"expenses", label:"المصروفات", icon:"fa-money-bill-wave" },
+    { id:"shippingCalc", label:"حاسبة طرود الشحن", icon:"fa-calculator" },
+    { id:"shippingShipments", label:"الشحنات", icon:"fa-boxes-packing" },
     { id:"reports", label:"التقارير", icon:"fa-chart-line" },
     { id:"settings", label:"الإعدادات", icon:"fa-gear" }
   ];
@@ -15860,6 +15862,7 @@
       btn.classList.toggle("auth-hidden", !!user && !shippingHasPermission(page));
     });
   }
+  window.applyShippingPermissionsUI = applyShippingPermissionsUI;
 
   function customerMapKey(){
     return `${storageKey()}_customers_by_code`;
@@ -16741,6 +16744,44 @@
   }
 
   init();
+})();
+</script>
+
+<script id="shipping-permissions-safety-patch-2026-05-03">
+(function(){
+  "use strict";
+  var PAGES=[
+    {id:"shippingCalc",label:"حاسبة طرود الشحن",icon:"fa-calculator"},
+    {id:"shippingShipments",label:"الشحنات",icon:"fa-boxes-packing"}
+  ];
+  function addToPermGrid(){
+    var grids=document.querySelectorAll(".employee-grid,.oskar-perm-grid");
+    grids.forEach(function(grid){
+      PAGES.forEach(function(p){
+        if(grid.querySelector('input[value="'+p.id+'"]')) return;
+        var cls=grid.classList.contains("oskar-perm-grid")?"oskar-perm":"perm-card";
+        var checkCls=grid.classList.contains("oskar-perm-grid")?"oskarPerm":"employee-permission-check";
+        var label=document.createElement("label");
+        label.className=cls;
+        label.innerHTML='<input type="checkbox" value="'+p.id+'" class="'+checkCls+'"><span><i class="fa-solid '+p.icon+'"></i> '+p.label+'</span>';
+        grid.appendChild(label);
+      });
+    });
+  }
+  function applyShipVisibility(){
+    var user=window.state&&window.state.auth?window.state.auth.user:null;
+    var perms=(user&&Array.isArray(user.permissions))?user.permissions:[];
+    var admin=!!user&&(user.role==="admin"||perms.indexOf("__admin__")>=0);
+    document.querySelectorAll("[data-ship-page]").forEach(function(btn){
+      var page=btn.dataset.shipPage;
+      var ok=!!user&&(admin||perms.indexOf(page)>=0);
+      btn.classList.toggle("auth-hidden",!ok);
+    });
+  }
+  var mo=new MutationObserver(function(){addToPermGrid();applyShipVisibility();});
+  mo.observe(document.documentElement,{childList:true,subtree:true});
+  document.addEventListener("click",function(){setTimeout(function(){addToPermGrid();applyShipVisibility();},80);},true);
+  window.addEventListener("load",function(){addToPermGrid();applyShipVisibility();setInterval(function(){addToPermGrid();applyShipVisibility();},1500);});
 })();
 </script>
 </body>

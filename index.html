@@ -4619,7 +4619,7 @@
 
             setTimeout(() => {
               if (!state.syncing) updateSyncUi({ spin: false });
-            }, 700);
+            }, 60000);
           } catch (e) {
             console.warn("Realtime sync error:", store, e);
 
@@ -8867,50 +8867,97 @@
     }
 
     async function downloadElementImage(element, filename) {
-      const canvas = await html2canvas(element, {
-        scale: 1.25,
-        useCORS: true,
-        allowTaint: false,
-        backgroundColor: "#ffffff"
-      });
-
-      const a = document.createElement("a");
-      a.href = canvas.toDataURL("image/png");
-      a.download = filename;
-      a.click();
+      if (!element) return;
+      if (!window.html2canvas) { toast("مكتبة تحميل الصور لم تجهز بعد"); return; }
+      const oldTransform = element.style.transform;
+      const oldAnimation = element.style.animation;
+      element.style.transform = "translateZ(0)";
+      element.style.animation = "none";
+      const scale = Math.min(1.25, Math.max(1, window.devicePixelRatio || 1));
+      try {
+        const canvas = await html2canvas(element, {
+          scale,
+          useCORS: true,
+          allowTaint: true,
+          backgroundColor: "#ffffff",
+          logging: false,
+          imageTimeout: 450,
+          removeContainer: true,
+          scrollX: 0,
+          scrollY: 0,
+          windowWidth: Math.max(document.documentElement.clientWidth, element.scrollWidth || element.offsetWidth || 1000),
+          windowHeight: Math.max(document.documentElement.clientHeight, element.scrollHeight || element.offsetHeight || 1000),
+          onclone: (doc) => {
+            const st = doc.createElement("style");
+            st.textContent = "*{animation:none!important;transition:none!important;caret-color:transparent!important} img{background:#fff!important} .ship-report-topline{height:auto!important;min-height:20px!important;overflow:visible!important}.ship-report-top-title,.ship-report-top-date{font-size:13px!important;line-height:1.8!important;white-space:nowrap!important;overflow:visible!important}";
+            doc.head.appendChild(st);
+          }
+        });
+        await new Promise(resolve => {
+          const saveBlob = blob => {
+            if (!blob) {
+              const a = document.createElement("a");
+              a.href = canvas.toDataURL("image/jpeg", 0.92);
+              a.download = filename;
+              a.click();
+              resolve();
+              return;
+            }
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = filename.replace(/\.png$/i, ".jpg");
+            a.click();
+            setTimeout(() => URL.revokeObjectURL(url), 1500);
+            resolve();
+          };
+          if (canvas.toBlob) canvas.toBlob(saveBlob, "image/jpeg", 0.92);
+          else saveBlob(null);
+        });
+      } finally {
+        element.style.transform = oldTransform;
+        element.style.animation = oldAnimation;
+      }
     }
 
     async function downloadElementPdf(element, filename) {
+      if (!element) return;
+      if (!window.html2canvas || !window.jspdf?.jsPDF) { toast("مكتبة PDF لم تجهز بعد"); return; }
+      const scale = Math.min(1.15, Math.max(1, window.devicePixelRatio || 1));
       const canvas = await html2canvas(element, {
-        scale: 1.25,
+        scale,
         useCORS: true,
-        allowTaint: false,
-        backgroundColor: "#ffffff"
+        allowTaint: true,
+        backgroundColor: "#ffffff",
+        logging: false,
+        imageTimeout: 450,
+        removeContainer: true,
+        scrollX: 0,
+        scrollY: 0,
+        onclone: (doc) => {
+          const st = doc.createElement("style");
+          st.textContent = "*{animation:none!important;transition:none!important} img{background:#fff!important}.ship-report-topline{height:auto!important;min-height:20px!important;overflow:visible!important}.ship-report-top-title,.ship-report-top-date{font-size:13px!important;line-height:1.8!important;white-space:nowrap!important;overflow:visible!important}";
+          doc.head.appendChild(st);
+        }
       });
-
-      const img = canvas.toDataURL("image/png");
+      const img = canvas.toDataURL("image/jpeg", 0.86);
       const { jsPDF } = window.jspdf;
-      const pdf = new jsPDF("p", "mm", "a4");
-
+      const pdf = new jsPDF("p", "mm", "a4", true);
       const pageWidth = pdf.internal.pageSize.getWidth();
       const pageHeight = pdf.internal.pageSize.getHeight();
-      const imgWidth = pageWidth - 12;
+      const margin = 5;
+      const imgWidth = pageWidth - margin * 2;
       const imgHeight = canvas.height * imgWidth / canvas.width;
-
-      if (imgHeight <= pageHeight - 12) {
-        pdf.addImage(img, "PNG", 6, 6, imgWidth, imgHeight);
+      if (imgHeight <= pageHeight - margin * 2) {
+        pdf.addImage(img, "JPEG", margin, margin, imgWidth, imgHeight, undefined, "FAST");
       } else {
-        let remaining = imgHeight;
-        let position = 0;
-
-        while (remaining > 0) {
-          pdf.addImage(img, "PNG", 6, 6 - position, imgWidth, imgHeight);
-          remaining -= pageHeight;
-          position += pageHeight;
-          if (remaining > 0) pdf.addPage();
+        let y = 0;
+        while (y < imgHeight) {
+          pdf.addImage(img, "JPEG", margin, margin - y, imgWidth, imgHeight, undefined, "FAST");
+          y += pageHeight - margin * 2;
+          if (y < imgHeight) pdf.addPage();
         }
       }
-
       pdf.save(filename);
     }
 
@@ -10871,7 +10918,7 @@
             await validateCurrentEmployeeSession();
           }
         }
-      }, 12000);
+      }, 45000);
     }
 
     if ("serviceWorker" in navigator) {
@@ -10985,7 +11032,7 @@
     const forgot=$("forgotAdminPasswordBtn"); if(forgot) forgot.onclick=openForgot; const saveBtn=$("saveAdminPasswordBtn")||$("changeAdminPasswordBtn"); if(saveBtn) saveBtn.onclick=changeAdminPassword; const logoutBtn=$("logoutBtn"); if(logoutBtn)logoutBtn.onclick=()=>{setUser(null);toast('تم تسجيل الخروج')}; const topLogoutBtn=$("topLogoutBtn"); if(topLogoutBtn)topLogoutBtn.onclick=()=>{setUser(null);toast('تم تسجيل الخروج')}; document.addEventListener('click',e=>{ if(e.target.closest('#forgotAdminPasswordBtn')){e.preventDefault();e.stopImmediatePropagation();openForgot();} if(e.target.closest('#saveAdminPasswordBtn,#changeAdminPasswordBtn')){e.preventDefault();e.stopImmediatePropagation();changeAdminPassword();} },true);
   }
   function styleFix(){ if($("directAuthFinalStyle"))return; const s=document.createElement('style'); s.id='directAuthFinalStyle'; s.textContent='.sidebar{z-index:5000!important}.bottom-nav{z-index:60!important}.auth-lock{z-index:9999!important}.modal-backdrop{z-index:10000!important}'; document.head.appendChild(s); }
-  async function init(){ for(let i=0;i<60;i++){ if(window.state)break; await wait(100); } styleFix(); ensureRecoveryUi(); bind(); applyUi(); if(window.state?.settings?.recoveryEmail && $("settingRecoveryEmail")) $("settingRecoveryEmail").value=window.state.settings.recoveryEmail; setInterval(()=>{ensureRecoveryUi();applyUi();},3000); log('direct auth final fix ready'); }
+  async function init(){ for(let i=0;i<60;i++){ if(window.state)break; await wait(100); } styleFix(); ensureRecoveryUi(); bind(); applyUi(); if(window.state?.settings?.recoveryEmail && $("settingRecoveryEmail")) $("settingRecoveryEmail").value=window.state.settings.recoveryEmail; setInterval(()=>{ensureRecoveryUi();applyUi();}, 60000); log('direct auth final fix ready'); }
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',init); else init();
 })();
 </script>
@@ -11773,7 +11820,7 @@
       patchFloatingScanner();
       patchTableTouch();
       patchReportNet();
-    }, 1200);
+    }, 60000);
   }
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);
@@ -12059,7 +12106,7 @@
   async function init(){
     for(let i=0;i<120;i++){ if(document.body) break; await wait(50); }
     installStyle(); patchScannerButtons(); bindEmployees(); patchTrial(); forceOskarName(); renderInventorySummary(); renderEmployeesFallback(); patchReportsNet();
-    setInterval(()=>{ patchTrial(); forceOskarName(); renderInventorySummary(); renderEmployeesFallback(); patchReportsNet(); }, 1200);
+    setInterval(()=>{ patchTrial(); forceOskarName(); renderInventorySummary(); renderEmployeesFallback(); patchReportsNet(); }, 60000);
     document.addEventListener("visibilitychange",()=>{ if(document.hidden) stopPatchScanner(); });
     window.addEventListener("beforeunload",()=>{ if(scannerRunning) stopPatchScanner(); });
     console.log("[oskar-integrated]", PATCH_VERSION, "ready");
@@ -12258,7 +12305,7 @@
   }
   function init(){
     installStyles(); optimizeExternalScripts(); stabilizeTrialAfterExpiry(); patchLoginGuideButtons(); addKeepCameraSetting(); bindFastScannerButtons(); patchCartLiveTotals(); prewarmQr(); fixTrialTextStable();
-    setInterval(()=>{ stabilizeTrialAfterExpiry(); addKeepCameraSetting(); fixTrialTextStable(); const b=$("oskarTrialSidebarMinutes"); if(b && isTrialUser()) b.textContent=leftMinutes(); },800);
+    setInterval(()=>{ stabilizeTrialAfterExpiry(); addKeepCameraSetting(); fixTrialTextStable(); const b=$("oskarTrialSidebarMinutes"); if(b && isTrialUser()) b.textContent=leftMinutes(); }, 60000);
   }
   if(document.readyState==="loading") document.addEventListener("DOMContentLoaded",init); else init();
   document.addEventListener("visibilitychange",()=>{ if(document.hidden && running && !keepCameraOpen()) stopScanner(); });
@@ -12291,7 +12338,7 @@
   function patchSyncTrial(){ /* تجربة أوفلاين فقط بدون مزامنة. */ }
   function patchLoginErrors(){ document.addEventListener('submit',function(e){ const f=e.target; if(!f) return; if(f.id==='adminLoginForm'){ const v=($('adminPasswordInput')?.value||'').trim(); if(!v){ e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation(); toast('أدخل كلمة مرور المدير'); } } if(f.id==='employeeLoginForm'){ const n=($('employeeNameInput')?.value||'').trim(), p=($('employeePasswordInput')?.value||'').trim(); if(!n || !p){ e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation(); toast(!n?'أدخل اسم المستخدم':'أدخل كلمة المرور'); } } },true); }
   function keepTrialLocalOnly(){ if(!isTrialActive()) return; window.OSKAR_TRIAL_LOCAL_ONLY=true; window.OSKAR_TRIAL_ACTIVE=true; window.OSKAR_TRIAL_FIREBASE_ALLOWED=false; }
-  function init(){ installStyles(); patchLoginErrors(); stabilizeTrialSidebar(); setInterval(()=>{ stabilizeTrialSidebar(); },60000); setTimeout(stabilizeTrialSidebar,800); setTimeout(stabilizeTrialSidebar,2500); }
+  function init(){ installStyles(); patchLoginErrors(); stabilizeTrialSidebar(); setInterval(()=>{ stabilizeTrialSidebar(); },60000); setTimeout(stabilizeTrialSidebar, 60000); setTimeout(stabilizeTrialSidebar, 60000); }
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',init); else init();
 })();
 </script>
@@ -12621,7 +12668,7 @@
     document.querySelectorAll(".table-wrap,.modal,.folder-tabs,.sync-operation-list").forEach(el=>{ el.style.webkitOverflowScrolling = "touch"; el.style.overscrollBehavior = "auto"; el.style.overscrollBehaviorX = "contain"; el.style.overscrollBehaviorY = "auto"; });
   }
   if(document.readyState === "loading") document.addEventListener("DOMContentLoaded", tick); else tick();
-  setInterval(tick, 1500);
+  setInterval(tick, 60000);
 })();
 </script>
 
@@ -12802,7 +12849,7 @@
     side.addEventListener("scroll", update, {passive:true});
     window.addEventListener("resize", update, {passive:true});
     setTimeout(update,80);
-    setInterval(update,1200);
+    setInterval(update, 60000);
   }
   function patchAddToCart(){
     if(window.addToCart && !window.addToCart.__cartonFinal){
@@ -12824,7 +12871,7 @@
   }
   function tick(){ runtimeUnits(); installSidebarHandle(); patchAddToCart(); }
   if(document.readyState==="loading") document.addEventListener("DOMContentLoaded", tick); else tick();
-  setInterval(tick,1200);
+  setInterval(tick, 60000);
 })();
 </script>
 
@@ -13027,7 +13074,7 @@
     if(syncBtn){ e.preventDefault(); e.stopImmediatePropagation(); forceTrialOffline(); toast("النسخة التجريبية أوفلاين فقط بدون مزامنة"); }
   }, true);
   if(document.readyState === "loading") document.addEventListener("DOMContentLoaded", tick); else tick();
-  setInterval(tick, 700);
+  setInterval(tick, 60000);
 })();
 </script>
 
@@ -13104,7 +13151,7 @@
   function tick(){ patchUnitRuntime(); patchAddToCart(); betterSidebarRail(); trialSettingsLocksVisible(); applyLogoToInvoices(); patchLogoUploadImmediate(); patchInvoiceSearchPlaceholder(); }
   document.addEventListener("click",()=>setTimeout(()=>{applyLogoToInvoices();patchUnitRuntime();},80),true);
   document.addEventListener("input",e=>{ if(e.target && e.target.id==="invoiceSearch" && typeof window.renderInvoices==="function") setTimeout(()=>window.renderInvoices(),0); },true);
-  if(document.readyState==="loading") document.addEventListener("DOMContentLoaded",tick); else tick(); setInterval(tick,700);
+  if(document.readyState==="loading") document.addEventListener("DOMContentLoaded",tick); else tick(); setInterval(tick, 60000);
 })();
 </script>
 
@@ -13507,7 +13554,7 @@
       }
     }, true);
     window.addEventListener("storage", restoreSavedSessionNoFlash);
-    setInterval(() => { ensureRecoveryUi(); suppressWrongForcedModal(); }, 1500);
+    setInterval(() => { ensureRecoveryUi(); suppressWrongForcedModal(); }, 60000);
   }
 
   async function init(){
@@ -13578,7 +13625,7 @@
   function tick(){syncTrialBodyClass();patchCartRuntime();enhanceCartPriceInputs();stabilizeAuthButtons();applyFastLogo(false)}
   if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",()=>{applyFastLogo(true);tick()},{once:true});else{applyFastLogo(true);tick()}
   window.addEventListener("load",()=>{applyFastLogo(true);tick()},{once:true});try{new MutationObserver(()=>setTimeout(tick,60)).observe(document.documentElement,{childList:true,subtree:true})}catch{}
-  setInterval(tick,900);
+  setInterval(tick, 60000);
 })();
 </script>
 
@@ -13853,7 +13900,7 @@
     setTimeout(() => { fixMobilePaymentLayout(); markLifetimeBest(); speedSpinners(); }, 60);
   }, true);
   try{ new MutationObserver(() => { if(!window.__oskarFinalFixTimer) window.__oskarFinalFixTimer = setTimeout(() => { window.__oskarFinalFixTimer = null; tick(); }, 80); }).observe(document.documentElement, { childList:true, subtree:true, attributes:true, attributeFilter:["class","style"] }); }catch{}
-  setInterval(tick, 900);
+  setInterval(tick, 60000);
 })();
 </script>
 
@@ -14220,7 +14267,7 @@
   if(document.readyState === "loading") document.addEventListener("DOMContentLoaded", markTrialSyncLock, {once:true});
   else markTrialSyncLock();
   window.addEventListener("load", markTrialSyncLock, {once:true});
-  setInterval(markTrialSyncLock, 750);
+  setInterval(markTrialSyncLock, 60000);
 })();
 </script>
 
@@ -14405,7 +14452,7 @@
       toast("المزامنة مقفلة في النسخة التجريبية، بيانات التجربة محفوظة على الجهاز فقط");
     }
   }, true);
-  setInterval(markTrialSyncLock, 700);
+  setInterval(markTrialSyncLock, 60000);
   if(document.readyState === "loading") document.addEventListener("DOMContentLoaded", markTrialSyncLock, {once:true}); else markTrialSyncLock();
 
   function preloadQrLib(){
@@ -16095,19 +16142,24 @@
   }
 
   function applyDefaultShippingLogoToApp(){
+    /* ultra-fix: لا تفرض شعار الشحن على شعار الموقع كل فترة، لأن هذا كان سبب الرجفة والبطء. */
     try{
       const settings = window.state && window.state.settings ? window.state.settings : null;
       if (settings) {
-        settings.logo = SHIPPING_DEFAULT_LOGO;
-        settings.logoUrl = SHIPPING_DEFAULT_LOGO;
-        settings.shopLogo = SHIPPING_DEFAULT_LOGO;
+        const hasAnyLogo = !!(settings.localLogo || settings.logoData || settings.logoBase64 || settings.companyLogo || settings.storeLogo || settings.shopLogo || settings.logoUrl || settings.logo);
+        if (!hasAnyLogo) {
+          settings.logo = SHIPPING_DEFAULT_LOGO;
+          settings.logoUrl = SHIPPING_DEFAULT_LOGO;
+          settings.shopLogo = SHIPPING_DEFAULT_LOGO;
+        }
       }
+      const src = settings && (settings.localLogo || settings.logoData || settings.logoBase64 || settings.companyLogo || settings.storeLogo || settings.shopLogo || settings.logoUrl || settings.logo) || SHIPPING_DEFAULT_LOGO;
       ["topShopLogo","sideShopLogo"].forEach(id => {
         const img = $(id);
-        if (img) {
+        if (img && !img.getAttribute("src")) {
           img.crossOrigin = "anonymous";
           img.referrerPolicy = "no-referrer";
-          img.src = SHIPPING_DEFAULT_LOGO;
+          img.src = src;
         }
       });
     }catch(e){}
@@ -16580,7 +16632,7 @@
     await loadRemoteShipments();
     await syncPendingShipCustomers();
     await syncPendingShipments();
-    setInterval(() => { applyDefaultShippingLogoToApp(); ensureNav(); ensurePages(); applyShippingPermissionsUI(); renderShipCustomersPage(); renderShipmentsPage(); }, 3000);
+    setInterval(() => { applyDefaultShippingLogoToApp(); ensureNav(); ensurePages(); applyShippingPermissionsUI(); renderShipCustomersPage(); renderShipmentsPage(); }, 60000);
     console.log("[oskar-shipping-cbm] ready", PATCH_VERSION);
   }
 
@@ -16652,218 +16704,415 @@
   var observer = new MutationObserver(function(){ refresh(); });
   observer.observe(document.documentElement, { childList:true, subtree:true });
   document.addEventListener("click", function(){ setTimeout(refresh, 60); }, true);
-  window.addEventListener("load", function(){ refresh(); setInterval(refresh, 1500); });
+  window.addEventListener("load", function(){ refresh(); setInterval(refresh, 60000); });
   refresh();
 })();
 </script>
 
-
-<style id="oskar-final-no-trial-buy-fixed-logo-style-2026-05-03">
+<style id="oskar-ultra-fast-green-final-style-2026-05-03">
+  :root{
+    --primary:#16a34a!important;
+    --primary2:#15803d!important;
+    --gold:#22c55e!important;
+    --success:#16a34a!important;
+    --soft-blue:#ecfdf5!important;
+    --shadow:0 10px 28px rgba(15,23,42,.07)!important;
+  }
+  body{
+    background:
+      radial-gradient(circle at top right,rgba(22,163,74,.13),transparent 34%),
+      radial-gradient(circle at bottom left,rgba(34,197,94,.11),transparent 32%),
+      linear-gradient(180deg,#f7fff9,#eef8f0)!important;
+  }
+  .topbar,.sidebar,.card,.clean-stats-card,.modal,.sync-popover,.bottom-nav{
+    backdrop-filter:none!important;
+    -webkit-backdrop-filter:none!important;
+  }
+  .topbar,.sidebar,.card,.clean-stats-card,.modal{
+    border-color:rgba(187,247,208,.85)!important;
+    box-shadow:0 10px 30px rgba(15,23,42,.07)!important;
+  }
+  .nav-btn.active,.primary-btn,.auth-main-btn,.fab-add,.folder-tab.active{
+    background:linear-gradient(135deg,#16a34a,#15803d)!important;
+    box-shadow:0 12px 26px rgba(22,163,74,.22)!important;
+  }
+  .gold-btn{background:linear-gradient(135deg,#22c55e,#16a34a)!important;box-shadow:0 12px 26px rgba(34,197,94,.18)!important}
+  .icon-btn:hover,.nav-btn:hover{background:#dcfce7!important;color:#15803d!important}
+  .money,.clean-stat-value,.stat-value{color:#15803d!important}
+  *{scroll-behavior:auto!important}
+  button,.primary-btn,.gold-btn,.ghost-btn,.danger-btn,.success-btn,.icon-btn,.nav-btn,.card,.product-card{
+    transition:transform .08s ease, background-color .08s ease, box-shadow .08s ease, border-color .08s ease!important;
+  }
+  button:active{transform:scale(.985)!important}
+  .section{animation:none!important;contain:layout style paint;content-visibility:auto;contain-intrinsic-size:1px 760px}
+  .section.active{content-visibility:visible!important;contain:none!important}
+  .table-wrap{overscroll-behavior:auto!important;-webkit-overflow-scrolling:touch!important;scrollbar-gutter:stable;contain:paint;transform:translateZ(0)}
+  .table-wrap table{backface-visibility:hidden;transform:translateZ(0)}
+  table td:last-child>div,
+  table td:last-child .actions,
+  table td:last-child .row-actions{
+    display:inline-flex!important;
+    align-items:center!important;
+    justify-content:flex-start!important;
+    gap:6px!important;
+    flex-wrap:nowrap!important;
+    white-space:nowrap!important;
+  }
+  table td:last-child button,
+  .table-wrap button[data-edit],.table-wrap button[data-delete],.table-wrap button[data-view],.table-wrap button[data-ship-view],.table-wrap button[data-ship-edit],.table-wrap button[data-ship-del],.table-wrap button[data-ship-wa]{
+    width:36px!important;height:36px!important;min-width:36px!important;padding:0!important;border-radius:13px!important;
+    display:inline-flex!important;align-items:center!important;justify-content:center!important;font-size:14px!important;
+  }
+  table td:last-child button i{margin:0!important}
+  .ship-report-page{padding-top:12px!important;overflow:visible!important;background:#fff!important}
+  .ship-report-topline{display:grid!important;grid-template-columns:minmax(170px,1fr) minmax(190px,1fr) minmax(120px,1fr)!important;align-items:center!important;min-height:28px!important;height:auto!important;margin:0 0 10px!important;padding:0 6px!important;overflow:visible!important;line-height:1.8!important}
+  .ship-report-top-title{font-size:15px!important;font-weight:900!important;text-align:center!important;white-space:nowrap!important;overflow:visible!important;color:#111827!important}
+  .ship-report-top-date{font-size:13px!important;text-align:left!important;direction:ltr!important;white-space:nowrap!important;overflow:visible!important;color:#374151!important}
+  img.shop-logo,img.invoice-logo,img.oskar-thermal-logo,img.ship-report-logo{
+    opacity:1!important;visibility:visible!important;background:#fff!important;transform:none!important;filter:none!important;will-change:auto!important;
+  }
+  .shop-logo{background:#fff!important;object-fit:cover!important;box-shadow:0 8px 20px rgba(22,163,74,.18)!important;border-color:#dcfce7!important}
+  #oskarUltraExportOverlay{position:fixed;inset:0;z-index:999999;display:none;align-items:center;justify-content:center;background:rgba(15,23,42,.28);backdrop-filter:blur(2px);font-family:Cairo,Arial,sans-serif;direction:rtl}
+  #oskarUltraExportOverlay.show{display:flex}
+  #oskarUltraExportOverlay .box{background:#fff;border-radius:22px;padding:18px 22px;box-shadow:0 24px 70px rgba(15,23,42,.22);font-weight:900;color:#0f172a;display:flex;gap:12px;align-items:center}
+  #oskarUltraExportOverlay .spin{width:24px;height:24px;border-radius:50%;border:3px solid #bbf7d0;border-top-color:#16a34a;animation:oskarUltraSpin .7s linear infinite}@keyframes oskarUltraSpin{to{transform:rotate(360deg)}}
   #trialLoginBtn,#trialLoginNote,#oskarPurchaseBox,#oskarPrimeBuyLoginBtn,#oskarPrimeBuyHomeBtn,#oskarPrimeHomeCard,
   #oskarPrimeSafePage,.oskar-prime-page-safe,.oskar-prime-page-screen,.oskar-prime-overlay,.oskar-trial-pill{display:none!important;visibility:hidden!important;pointer-events:none!important}
-  .oskar-thermal-logo{width:18mm!important;height:18mm!important;display:block!important;margin:0 auto 6px!important;object-fit:cover!important;border-radius:4mm!important;background:#fff!important}
+  @media(max-width:720px){
+    table td:last-child button{width:34px!important;height:34px!important;min-width:34px!important}
+    .ship-report-topline{grid-template-columns:1fr!important;gap:2px!important;text-align:center!important}.ship-report-top-date,.ship-report-top-title{text-align:center!important}
+  }
 </style>
-<script id="oskar-final-no-trial-buy-fixed-logo-2026-05-03">
+<script id="oskar-ultra-fast-green-final-script-2026-05-03">
 (function(){
   "use strict";
-  const FIXED_LOGO = "https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEjdPPkUu7icK6Xvj7WNXy7gzT23kN4qXGgKncrc21CwjupZWN014sOZvrLyhpVj_0BwSjuLgaadrXZBLjED8aV3XJaOn02FpqJa3PnXTQm6cUcgDp99_e0E-k7tt39FC0k3qStrGsmTEsiuKR_YRxl1faWKCNMnftwInFKZoO0yTw5RUnipfYhGW2s1GY02/s1200/1000023372.jpg";
-  window.OSKAR_FIXED_SITE_LOGO_URL = FIXED_LOGO;
-  const trialKeys = ["oskar_storage_mode_v1","oskar_trial_started_at_v1","oskar_trial_logged_out_v1","oskar_trial_used_once_v1"];
-  const removeSelectors = ["#trialLoginBtn","#trialLoginNote","#oskarPurchaseBox","#oskarPrimeBuyLoginBtn","#oskarPrimeBuyHomeBtn","#oskarPrimeHomeCard","#oskarPrimeSafePage",".oskar-prime-page-safe",".oskar-prime-page-screen",".oskar-prime-overlay","#oskarTrialPill",".oskar-trial-pill"];
-  const $ = id => document.getElementById(id);
-  function toast(msg,ms){ if(typeof window.toast === "function") return window.toast(msg,ms||2400); }
-  function sanitizeSettings(s){
-    s = { id:"main", ...(s || {}) };
-    try{
-      const cached = localStorage.getItem("oskar_fast_logo_cache_src_v1") || "";
-      if (s.localLogo) {
-        s.logo = "";
-        s.logoMode = "local";
-        localStorage.setItem("oskar_fast_logo_cache_src_v1", s.localLogo);
-      } else {
-        s.logo = s.logo || cached || FIXED_LOGO;
-        s.logoMode = s.logo && s.logo !== FIXED_LOGO ? "url" : "fixed";
-      }
-    }catch(e){
-      if (!s.localLogo && !s.logo) s.logo = FIXED_LOGO;
-      s.logoMode = s.localLogo ? "local" : "fixed";
-    }
-    return s;
-  }
-  function effectiveLogo(){
-    const s = sanitizeSettings(window.state && window.state.settings ? window.state.settings : {});
-    let cached = "";
-    try{ cached = localStorage.getItem("oskar_fast_logo_cache_src_v1") || ""; }catch(e){}
-    return s.localLogo || s.logo || cached || FIXED_LOGO;
-  }
-  function cleanupTrialAndBuy(){
-    try{ trialKeys.forEach(k=>localStorage.removeItem(k)); }catch(e){}
-    window.OSKAR_TRIAL_ACTIVE = false;
-    window.OSKAR_TRIAL_LOCAL_ONLY = false;
-    window.OSKAR_TRIAL_FIREBASE_ALLOWED = true;
-    document.body && document.body.classList.remove("oskar-trial-mode");
-    removeSelectors.forEach(sel => document.querySelectorAll(sel).forEach(el => el.remove()));
-  }
-  function applyFixedLogo(){
-    if(window.state) window.state.settings = sanitizeSettings(window.state.settings || {});
-    const src = effectiveLogo();
-    ["topShopLogo","sideShopLogo","settingLogoPreview"].forEach(id => {
-      const img = $(id); if(!img) return;
-      img.loading = "eager"; img.decoding = "async"; img.referrerPolicy = "no-referrer";
-      try{ img.fetchPriority = "high"; }catch(e){}
-      img.onerror = function(){ this.onerror = null; this.src = FIXED_LOGO; };
-      if(img.src !== src) img.src = src;
-    });
-    document.querySelectorAll("img.invoice-logo,img.oskar-thermal-logo").forEach(img => {
-      img.referrerPolicy = "no-referrer";
-      img.onerror = function(){ this.onerror = null; this.src = FIXED_LOGO; };
-      if(!img.getAttribute("src") || /undefined|null|about:blank/i.test(img.getAttribute("src"))) img.src = src;
-    });
-    const del = $("deleteLocalLogoBtn"); if(del) del.disabled = !(window.state && window.state.settings && window.state.settings.localLogo);
-  }
-  async function saveLocalLogoFromFile(file){
-    if(!file || !window.state) return;
-    const dataUrl = await new Promise((resolve,reject)=>{ const r=new FileReader(); r.onload=()=>resolve(String(r.result||"")); r.onerror=reject; r.readAsDataURL(file); });
-    window.state.settings = sanitizeSettings({ ...(window.state.settings||{}), localLogo:dataUrl, logo:"", logoMode:"local", updatedAt:Date.now() });
-    try{ localStorage.setItem("oskar_fast_logo_cache_src_v1", dataUrl); }catch(e){}
-    if(typeof window.idbPut === "function") await window.idbPut("settings", window.state.settings);
-    const input = $("settingLogoFile"); if(input) input.value = "";
-    applyFixedLogo();
-    toast("تم حفظ صورة الجهاز محليًا فقط ولن تُرفع على Firebase");
-  }
-  async function deleteLocalLogo(){
-    if(!window.state) return;
-    try{ localStorage.removeItem("oskar_fast_logo_cache_src_v1"); }catch(e){}
-    window.state.settings = sanitizeSettings({ ...(window.state.settings||{}), localLogo:"", logo:FIXED_LOGO, logoMode:"fixed", updatedAt:Date.now() });
-    if(typeof window.idbPut === "function") await window.idbPut("settings", window.state.settings);
-    const input = $("settingLogoFile"); if(input) input.value = "";
-    applyFixedLogo();
-    toast("تم حذف صورة الجهاز والرجوع لصورة الموقع الأصلية");
-  }
-  function bindLocalLogoControls(){
-    const input = $("settingLogoFile");
-    if(input && !input.__oskarFinalLocalLogoOnly){
-      input.__oskarFinalLocalLogoOnly = true;
-      input.addEventListener("change", e => { const file=e.target.files && e.target.files[0]; if(file) saveLocalLogoFromFile(file).catch(err=>{console.warn(err);toast("تعذر حفظ الصورة المحلية");}); }, true);
-    }
-    const del = $("deleteLocalLogoBtn");
-    if(del && !del.__oskarFinalDeleteLogo){
-      del.__oskarFinalDeleteLogo = true;
-      del.addEventListener("click", e => { e.preventDefault(); e.stopImmediatePropagation(); deleteLocalLogo(); }, true);
-    }
-  }
-  function wrapCloudSaves(){
-    if(window.enqueueSync && !window.enqueueSync.__oskarFixedLogoSafe){
-      const old = window.enqueueSync;
-      window.enqueueSync = function(action){
-        if(action && action.store === "settings" && action.data) { const clean = sanitizeSettings(action.data); action = { ...action, data: {...clean, localLogo:"", logo: clean.localLogo ? "" : clean.logo, logoMode: clean.localLogo ? "local" : clean.logoMode} }; }
-        return old.call(this, action);
-      };
-      window.enqueueSync.__oskarFixedLogoSafe = true;
-    }
-    if(window.set && !window.set.__oskarFixedLogoSafe){
-      const oldSet = window.set;
-      window.set = function(refObj, data){
-        if(data && typeof data === "object" && ("shopName" in data || "logo" in data || "localLogo" in data) && (data.id === "main" || "currency" in data || "lowStock" in data)){
-          const clean = sanitizeSettings(data);
-          data = { ...clean, localLogo:"", logo: clean.localLogo ? "" : clean.logo, logoMode: clean.localLogo ? "local" : clean.logoMode };
-        }
-        return oldSet.call(this, refObj, data);
-      };
-      window.set.__oskarFixedLogoSafe = true;
-    }
-  }
-  let __logoTickAt = 0;
-  function tick(){ cleanupTrialAndBuy(); bindLocalLogoControls(); wrapCloudSaves(); applyFixedLogo(); }
-  function safeTick(){ const now = Date.now(); if(now - __logoTickAt < 650) return; __logoTickAt = now; tick(); }
-  if(document.readyState === "loading") document.addEventListener("DOMContentLoaded", safeTick, {once:true}); else safeTick();
-  new MutationObserver(safeTick).observe(document.documentElement, {childList:true,subtree:true});
-  setInterval(safeTick, 2800);
-})();
-</script>
+  if (window.__OSKAR_ULTRA_FAST_GREEN_FINAL__) return;
+  window.__OSKAR_ULTRA_FAST_GREEN_FINAL__ = true;
 
-
-<style id="oskar-final-speed-logo-notes-fix-2026-05-03">
-  .section{content-visibility:auto;contain-intrinsic-size:1px 720px}
-  .section.active{content-visibility:visible}
-  .table-wrap{overscroll-behavior:auto;scrollbar-gutter:stable;will-change:scroll-position}
-  img.shop-logo,img.invoice-logo,img.oskar-thermal-logo,img.ship-report-logo{opacity:1!important;visibility:visible!important;background:#fff!important}
-  @media(max-width:720px){#invoiceCustomRangeBox{grid-template-columns:1fr 1fr!important}.ship-date-range-box{grid-template-columns:1fr 1fr!important}}
-</style>
-<script id="oskar-final-speed-logo-notes-fix-2026-05-03">
-(function(){
-  "use strict";
+  const DEFAULT_LOGO = window.OSKAR_FIXED_SITE_LOGO_URL || "https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEjdPPkUu7icK6Xvj7WNXy7gzT23kN4qXGgKncrc21CwjupZWN014sOZvrLyhpVj_0BwSjuLgaadrXZBLjED8aV3XJaOn02FpqJa3PnXTQm6cUcgDp99_e0E-k7tt39FC0k3qStrGsmTEsiuKR_YRxl1faWKCNMnftwInFKZoO0yTw5RUnipfYhGW2s1GY02/s1200/1000023372.jpg";
+  const LOGO_CACHE = "oskar_stable_logo_src_v4";
   const $ = id => document.getElementById(id);
-  const $$ = sel => Array.from(document.querySelectorAll(sel));
-  const FALLBACK = window.OSKAR_FIXED_SITE_LOGO_URL || "";
+  const $$ = (sel, root=document) => Array.from(root.querySelectorAll(sel));
   const bad = src => { const v = String(src || "").trim(); return !v || /undefined|null|about:blank|blob:null/i.test(v); };
-  function bestLogo(){
+  const toast = (msg, ms=1800) => typeof window.toast === "function" ? window.toast(msg, ms) : console.log(msg);
+  const raf = fn => requestAnimationFrame(() => { try{ fn(); }catch(e){ console.warn(e); } });
+
+  let lockedLogo = "";
+  let logoApplyTimer = 0;
+
+  function currentLogo(){
     const s = window.state?.settings || {};
     let cached = "";
-    try{ cached = localStorage.getItem("oskar_fast_logo_cache_src_v1") || ""; }catch(e){}
-    return [s.localLogo, s.logoData, s.logoBase64, s.companyLogo, s.storeLogo, s.logoUrl, s.logo, cached, FALLBACK].find(x => !bad(x)) || "";
+    try { cached = localStorage.getItem(LOGO_CACHE) || localStorage.getItem("oskar_fast_logo_cache_src_v1") || ""; } catch(e) {}
+    return [s.localLogo, s.logoData, s.logoBase64, s.companyLogo, s.storeLogo, s.logoUrl, s.logo, s.shopLogo, cached, DEFAULT_LOGO].find(x => !bad(x)) || DEFAULT_LOGO;
   }
-  function applyLogo(){
-    const src = bestLogo();
-    if(!src) return;
+
+  function lockImageElement(img){
+    if (!img || img.__oskarUltraLogoGuard) return;
+    img.__oskarUltraLogoGuard = true;
+    const desc = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, "src");
+    if (desc && desc.set && desc.get) {
+      try {
+        Object.defineProperty(img, "src", {
+          configurable: true,
+          get(){ return desc.get.call(this); },
+          set(v){
+            const next = String(v || "");
+            if (this.__oskarLogoLocked && lockedLogo && !bad(next) && next !== lockedLogo) {
+              desc.set.call(this, lockedLogo);
+            } else {
+              desc.set.call(this, next);
+            }
+          }
+        });
+      } catch(e) {}
+    }
+  }
+
+  function applyStableLogo(force=false){
+    const src = currentLogo();
+    if (bad(src)) return;
+    if (src !== lockedLogo) {
+      lockedLogo = src;
+      try { localStorage.setItem(LOGO_CACHE, src); localStorage.setItem("oskar_fast_logo_cache_src_v1", src); } catch(e) {}
+      if (window.state?.settings) {
+        window.state.settings.logoMode = window.state.settings.localLogo ? "local" : "stable";
+        if (!window.state.settings.localLogo && !window.state.settings.logo) window.state.settings.logo = src;
+      }
+    }
     ["topShopLogo","sideShopLogo","settingLogoPreview"].forEach(id => {
       const img = $(id);
-      if(!img) return;
-      img.loading = "eager"; img.decoding = "async"; img.referrerPolicy = "no-referrer";
-      try{ img.fetchPriority = "high"; }catch(e){}
-      img.onerror = function(){ this.onerror = null; if(FALLBACK) this.src = FALLBACK; };
-      if (bad(img.getAttribute("src")) || img.src !== src) img.src = src;
+      if (!img) return;
+      lockImageElement(img);
+      img.__oskarLogoLocked = true;
+      img.loading = "eager";
+      img.decoding = "async";
+      img.referrerPolicy = "no-referrer";
+      try { img.fetchPriority = "high"; } catch(e) {}
+      img.onerror = function(){ this.onerror = null; if (lockedLogo && this.getAttribute("src") !== lockedLogo) this.setAttribute("src", lockedLogo); };
+      if (force || bad(img.getAttribute("src")) || img.getAttribute("src") !== lockedLogo) img.setAttribute("src", lockedLogo);
     });
-    $$("img.invoice-logo,img.oskar-thermal-logo,img.ship-report-logo,img.shop-logo").forEach(img => {
+    $$('img.invoice-logo,img.oskar-thermal-logo,img.ship-report-logo').forEach(img => {
       img.loading = "eager"; img.decoding = "async"; img.referrerPolicy = "no-referrer";
-      try{ img.fetchPriority = "high"; }catch(e){}
-      img.onerror = function(){ this.onerror = null; if(FALLBACK) this.src = FALLBACK; };
-      if (bad(img.getAttribute("src"))) img.src = src;
+      if (bad(img.getAttribute("src"))) img.setAttribute("src", lockedLogo);
     });
   }
-  function bindLogoFile(){
+
+  function scheduleLogo(){ clearTimeout(logoApplyTimer); logoApplyTimer = setTimeout(() => applyStableLogo(false), 80); }
+
+  function bindLogoUpload(){
     const input = $("settingLogoFile");
-    if(!input || input.__oskarLocalLogoPriorityFinal) return;
-    input.__oskarLocalLogoPriorityFinal = true;
-    input.addEventListener("change", e => {
-      const file = e.target.files && e.target.files[0];
-      if(!file) return;
-      const r = new FileReader();
-      r.onload = async () => {
-        const dataUrl = String(r.result || "");
-        if(!dataUrl) return;
-        window.state = window.state || {};
-        window.state.settings = {id:"main", ...(window.state.settings || {}), localLogo:dataUrl, logo:"", logoMode:"local", updatedAt:Date.now()};
-        try{ localStorage.setItem("oskar_fast_logo_cache_src_v1", dataUrl); }catch(e){}
-        try{ if(typeof window.idbPut === "function") await window.idbPut("settings", window.state.settings); }catch(e){}
-        applyLogo();
-        if(typeof window.toast === "function") window.toast("تم اعتماد شعار الجهاز وحذف شعار الموقع من العرض");
-      };
-      r.readAsDataURL(file);
-    }, true);
+    if (input && !input.__oskarUltraStableUpload) {
+      input.__oskarUltraStableUpload = true;
+      input.addEventListener("change", ev => {
+        const file = ev.target.files && ev.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = async () => {
+          const dataUrl = String(reader.result || "");
+          if (bad(dataUrl)) return;
+          lockedLogo = dataUrl;
+          window.state = window.state || {};
+          window.state.settings = { id:"main", ...(window.state.settings || {}), localLogo:dataUrl, logo:"", logoUrl:"", shopLogo:"", logoMode:"local", updatedAt:Date.now() };
+          try { localStorage.setItem(LOGO_CACHE, dataUrl); localStorage.setItem("oskar_fast_logo_cache_src_v1", dataUrl); } catch(e) {}
+          try { if (typeof window.idbPut === "function") await window.idbPut("settings", window.state.settings); } catch(e) {}
+          applyStableLogo(true);
+          toast("تم تثبيت صورة الموقع من الجهاز ولن ترفرف مرة ثانية");
+        };
+        reader.readAsDataURL(file);
+      }, true);
+    }
   }
-  function bindShipFilters(){
-    const ids = ["shipSort","shipPeriod","shipDateOnlyFrom","shipDateOnlyTo","shipDateFrom","shipDateTo","shipSearch"];
-    ids.forEach(id => {
-      const el = $(id);
-      if(!el || el.__oskarShipFilterFinal) return;
-      el.__oskarShipFilterFinal = true;
-      const fire = () => { try{ if(typeof window.renderShipmentsPage === "function") window.renderShipmentsPage(); }catch(e){} };
-      el.addEventListener("input", fire, true);
-      el.addEventListener("change", fire, true);
-      el.addEventListener("click", () => setTimeout(fire, 0), true);
+
+  const renderMap = {
+    home:["renderHome","renderProductsHome","renderNotifications"],
+    cashier:["renderCart"],
+    freeInvoice:["renderFreeInvoice"],
+    inventory:["renderInventory"],
+    invoices:["renderInvoiceFolders","renderInvoices"],
+    debts:["renderDebts"],
+    purchases:["renderPurchases"],
+    supplierPayments:["renderSupplierPayments"],
+    expenses:["renderExpenses"],
+    reports:["renderReports"],
+    settings:["renderSettingsAccounts","renderEmployees"],
+    shippingCalc:["renderShipCustomersPage"],
+    shippingCustomers:["renderShipCustomersPage"],
+    shippingShipments:["renderShipmentsPage"]
+  };
+
+  function activePage(){ const sec = document.querySelector(".section.active[id^='page-']"); return sec ? sec.id.replace(/^page-/,"") : "home"; }
+  let renderRaf = 0;
+  function renderOnly(page){
+    cancelAnimationFrame(renderRaf);
+    renderRaf = requestAnimationFrame(() => {
+      (renderMap[page] || []).forEach(name => { try { if (typeof window[name] === "function") window[name](); } catch(e){ console.warn(name, e); } });
+      try { if (typeof window.applySettingsToUI === "function") window.applySettingsToUI(); } catch(e) {}
+      try { if (typeof window.applyPermissionsUI === "function") window.applyPermissionsUI(); } catch(e) {}
+      applyStableLogo(false);
     });
   }
-  let last = 0;
-  function tick(){
-    const now = Date.now();
-    if(now - last < 500) return;
-    last = now;
-    bindLogoFile(); bindShipFilters(); applyLogo();
+
+  function goPage(page){
+    if (!page) return;
+    const target = $("page-" + page);
+    if (!target) return;
+    $$(".section").forEach(sec => sec.classList.toggle("active", sec === target));
+    $$('[data-page],.bottom-btn').forEach(btn => btn.classList.toggle("active", (btn.dataset.page || btn.dataset.pageJump) === page));
+    const side = $("sidebar"); if (side) side.classList.remove("open");
+    renderOnly(page);
+    window.scrollTo({top:0, behavior:"instant"});
   }
-  if(document.readyState === "loading") document.addEventListener("DOMContentLoaded", tick, {once:true}); else tick();
-  new MutationObserver(tick).observe(document.documentElement, {childList:true, subtree:true});
-  setInterval(tick, 2500);
+
+  window.addEventListener("click", ev => {
+    const nav = ev.target.closest('[data-page-jump],[data-page]');
+    if (nav) {
+      const page = nav.dataset.pageJump || nav.dataset.page;
+      if ($("page-" + page)) { ev.preventDefault(); ev.stopImmediatePropagation(); goPage(page); return; }
+    }
+  }, true);
+
+  const searchSelector = [
+    "#cashierSearch","#homeProductSearch","#inventorySearch","#invoiceSearch","#debtsSearch","#purchaseTableSearch",
+    "#supplierPaymentsSearch","#expensesSearch","#reportsSearch","#shipSearch","#shipCustomerSearch"
+  ].join(",");
+  window.addEventListener("input", ev => {
+    const el = ev.target && ev.target.matches && ev.target.matches(searchSelector) ? ev.target : null;
+    if (!el || ev.__oskarUltraReplay) return;
+    ev.stopImmediatePropagation();
+    clearTimeout(el.__oskarUltraInputTimer);
+    el.__oskarUltraInputTimer = setTimeout(() => {
+      const e2 = new Event("input", {bubbles:true});
+      e2.__oskarUltraReplay = true;
+      el.dispatchEvent(e2);
+      renderOnly(activePage());
+    }, 75);
+  }, true);
+
+  function overlay(show, text){
+    let el = $("oskarUltraExportOverlay");
+    if (!el) {
+      el = document.createElement("div");
+      el.id = "oskarUltraExportOverlay";
+      el.innerHTML = '<div class="box"><span class="spin"></span><span id="oskarUltraExportText">جاري التحميل...</span></div>';
+      document.body.appendChild(el);
+    }
+    const tx = $("oskarUltraExportText"); if (tx) tx.textContent = text || "جاري التحميل...";
+    el.classList.toggle("show", !!show);
+  }
+
+  async function ultraCanvas(element, scale){
+    if (!window.html2canvas) throw new Error("html2canvas_not_ready");
+    applyStableLogo(false);
+    return await window.html2canvas(element, {
+      backgroundColor:"#ffffff",
+      scale: scale || Math.min(1.2, Math.max(1, window.devicePixelRatio || 1)),
+      useCORS:true,
+      allowTaint:true,
+      logging:false,
+      imageTimeout:420,
+      removeContainer:true,
+      scrollX:0,
+      scrollY:0,
+      onclone(doc){
+        const st = doc.createElement("style");
+        st.textContent = '*{animation:none!important;transition:none!important}.ship-report-page{padding-top:12px!important;overflow:visible!important}.ship-report-topline{display:grid!important;grid-template-columns:minmax(170px,1fr) minmax(190px,1fr) minmax(120px,1fr)!important;min-height:28px!important;height:auto!important;margin-bottom:10px!important;overflow:visible!important}.ship-report-top-title{font-size:15px!important;line-height:1.8!important;font-weight:900!important;white-space:nowrap!important;overflow:visible!important}.ship-report-top-date{font-size:13px!important;line-height:1.8!important;white-space:nowrap!important;overflow:visible!important}.shop-logo,.invoice-logo,.ship-report-logo,.oskar-thermal-logo{background:#fff!important;opacity:1!important;visibility:visible!important}';
+        doc.head.appendChild(st);
+      }
+    });
+  }
+
+  window.downloadElementImage = async function(element, filename){
+    if (!element) return;
+    overlay(true, "جاري تجهيز الصورة بسرعة...");
+    try {
+      const canvas = await ultraCanvas(element, 1.15);
+      await new Promise(resolve => {
+        const done = blob => {
+          if (!blob) { const a=document.createElement("a"); a.href=canvas.toDataURL("image/jpeg",.9); a.download=String(filename||"report.jpg").replace(/\.png$/i,".jpg"); a.click(); resolve(); return; }
+          const url = URL.createObjectURL(blob); const a=document.createElement("a"); a.href=url; a.download=String(filename||"report.jpg").replace(/\.png$/i,".jpg"); a.click(); setTimeout(()=>URL.revokeObjectURL(url),1500); resolve();
+        };
+        canvas.toBlob ? canvas.toBlob(done,"image/jpeg",.9) : done(null);
+      });
+    } catch(e) { console.warn(e); toast("تعذر تحميل الصورة"); }
+    finally { overlay(false); }
+  };
+
+  window.downloadElementPdf = async function(element, filename){
+    if (!element) return;
+    overlay(true, "جاري تجهيز PDF بسرعة...");
+    try {
+      const canvas = await ultraCanvas(element, 1.05);
+      const img = canvas.toDataURL("image/jpeg", .84);
+      const { jsPDF } = window.jspdf || {};
+      if (!jsPDF) throw new Error("jspdf_not_ready");
+      const pdf = new jsPDF("p","mm","a4", true);
+      const pw = pdf.internal.pageSize.getWidth(), ph = pdf.internal.pageSize.getHeight();
+      const margin = 5, iw = pw - margin*2, ih = canvas.height * iw / canvas.width;
+      if (ih <= ph - margin*2) pdf.addImage(img,"JPEG",margin,margin,iw,ih,undefined,"FAST");
+      else { let y=0; while(y<ih){ pdf.addImage(img,"JPEG",margin,margin-y,iw,ih,undefined,"FAST"); y += ph - margin*2; if(y<ih) pdf.addPage(); } }
+      pdf.save(filename || "report.pdf");
+    } catch(e) { console.warn(e); toast("تعذر تحميل PDF"); }
+    finally { overlay(false); }
+  };
+
+  let qrScanner = null, qrRunning = false, qrMode = "sale", qrTarget = "", lastCode = "", lastAt = 0;
+  function ensureQrDom(){
+    let p = $("oskarUltraScanner");
+    if (p) return p;
+    p = document.createElement("div");
+    p.id = "oskarUltraScanner";
+    p.style.cssText = "position:fixed;inset:0;background:#000;z-index:1000000;display:none;direction:rtl";
+    p.innerHTML = '<div id="oskarUltraReader" style="width:100vw;height:100vh;background:#000"></div><button id="oskarUltraScannerClose" type="button" style="position:fixed;left:15px;top:15px;z-index:3;width:50px;height:50px;border:0;border-radius:17px;background:rgba(15,23,42,.88);color:#fff;font-size:24px;font-weight:900">×</button><div style="position:fixed;top:50%;left:50%;width:min(84vw,520px);height:min(40vh,285px);transform:translate(-50%,-50%);border:4px solid rgba(34,197,94,.9);border-radius:30px;box-shadow:0 0 0 9999px rgba(0,0,0,.18),0 0 38px rgba(34,197,94,.55);pointer-events:none;z-index:2"></div><div style="position:fixed;top:50%;left:50%;width:min(72vw,430px);height:3px;transform:translate(-50%,-50%);background:linear-gradient(90deg,transparent,#22c55e,transparent);box-shadow:0 0 22px #22c55e;border-radius:999px;pointer-events:none;z-index:2"></div><div id="oskarUltraScannerTitle" style="position:fixed;right:15px;top:17px;z-index:3;background:rgba(15,23,42,.88);color:#fff;border-radius:17px;padding:12px 15px;font-weight:900;font-family:Cairo,Arial,sans-serif">قراءة باركود</div><div style="position:fixed;right:16px;left:16px;bottom:22px;z-index:3;background:rgba(15,23,42,.88);color:#fff;border-radius:20px;padding:13px 16px;text-align:center;font-weight:900;font-family:Cairo,Arial,sans-serif">ضع الباركود داخل الإطار وسيتم الالتقاط فوراً</div>';
+    document.body.appendChild(p);
+    $("oskarUltraScannerClose").onclick = stopQr;
+    return p;
+  }
+  async function loadQr(){
+    if (window.Html5Qrcode) return true;
+    await new Promise((resolve, reject) => {
+      const old = Array.from(document.scripts).find(s => /html5-qrcode/i.test(s.src || ""));
+      if (old) { old.addEventListener("load", resolve, {once:true}); setTimeout(resolve, 900); return; }
+      const sc=document.createElement("script"); sc.src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"; sc.async=true; sc.onload=resolve; sc.onerror=reject; document.head.appendChild(sc);
+    });
+    return !!window.Html5Qrcode;
+  }
+  async function stopQr(){
+    try { if (qrScanner && qrRunning) await qrScanner.stop(); } catch(e) {}
+    try { if (qrScanner) await qrScanner.clear(); } catch(e) {}
+    qrScanner = null; qrRunning = false;
+    const p = $("oskarUltraScanner"); if (p) p.style.display = "none";
+  }
+  function handleQr(code){
+    code = String(code || "").trim();
+    if (!code) return;
+    if (qrMode === "product" || qrTarget) {
+      const input = $(qrTarget || "productBarcode");
+      if (input) { input.value = code; input.dispatchEvent(new Event("input",{bubbles:true})); input.dispatchEvent(new Event("change",{bubbles:true})); }
+      stopQr(); toast("تمت قراءة الباركود"); return;
+    }
+    try {
+      if (typeof window.getProductByBarcode === "function" && typeof window.addToCart === "function") {
+        const p = window.getProductByBarcode(code);
+        if (p) { window.addToCart(p); toast("تمت إضافة المنتج"); return; }
+      }
+      const search = $("cashierSearch"); if (search) { search.value = code; search.dispatchEvent(new Event("input",{bubbles:true})); }
+      toast("تمت قراءة الكود");
+    } catch(e) { console.warn(e); }
+  }
+  async function openQr(mode="sale", target=""){
+    await stopQr();
+    qrMode = mode; qrTarget = target || ""; lastCode = ""; lastAt = 0;
+    const page = ensureQrDom(); page.style.display = "block";
+    const title = $("oskarUltraScannerTitle"); if (title) title.textContent = mode === "product" ? "قراءة باركود المنتج" : "قراءة باركود للبيع";
+    try {
+      const ok = await loadQr(); if (!ok) throw new Error("html5qrcode_not_ready");
+      const formats = window.Html5QrcodeSupportedFormats ? [Html5QrcodeSupportedFormats.QR_CODE,Html5QrcodeSupportedFormats.EAN_13,Html5QrcodeSupportedFormats.EAN_8,Html5QrcodeSupportedFormats.UPC_A,Html5QrcodeSupportedFormats.UPC_E,Html5QrcodeSupportedFormats.CODE_128,Html5QrcodeSupportedFormats.CODE_39,Html5QrcodeSupportedFormats.CODE_93,Html5QrcodeSupportedFormats.ITF,Html5QrcodeSupportedFormats.CODABAR,Html5QrcodeSupportedFormats.DATA_MATRIX,Html5QrcodeSupportedFormats.AZTEC,Html5QrcodeSupportedFormats.PDF_417] : undefined;
+      qrScanner = new Html5Qrcode("oskarUltraReader", formats ? {formatsToSupport:formats, verbose:false} : undefined);
+      const config = { fps: 30, qrbox: (w,h) => ({width:Math.floor(w*.82), height:Math.floor(h*.34)}), aspectRatio: 1.7777778, disableFlip:false, experimentalFeatures:{useBarCodeDetectorIfSupported:true}, videoConstraints:{facingMode:{ideal:"environment"}, width:{ideal:1920}, height:{ideal:1080}, advanced:[{focusMode:"continuous"},{exposureMode:"continuous"},{whiteBalanceMode:"continuous"}]} };
+      await qrScanner.start({facingMode:"environment"}, config, txt => { const now=Date.now(), c=String(txt||"").trim(); if(!c || (c===lastCode && now-lastAt<1200)) return; lastCode=c; lastAt=now; try{ if(navigator.vibrate) navigator.vibrate(50); }catch(e){} handleQr(c); }, () => {});
+      qrRunning = true;
+    } catch(e) { console.warn(e); toast("تعذر فتح الكاميرا، تأكد من السماح للكاميرا و HTTPS"); await stopQr(); }
+  }
+  window.openScanner = (mode="sale", target="") => openQr(mode, target);
+  window.openFloatingProductBarcodeScanner = (target="productBarcode") => openQr("product", target);
+  window.addEventListener("click", ev => {
+    const sale = ev.target.closest("#openScannerBtn");
+    const prod = ev.target.closest("#scanProductBarcodeBtn");
+    if (sale) { ev.preventDefault(); ev.stopImmediatePropagation(); openQr("sale", ""); return; }
+    if (prod) { ev.preventDefault(); ev.stopImmediatePropagation(); openQr("product", "productBarcode"); return; }
+  }, true);
+  window.addEventListener("beforeunload", () => { if (qrRunning) stopQr(); });
+
+  function guardSyncSpinner(){
+    const btn = $("syncNowBtn");
+    if (!btn) return;
+    if (btn.classList.contains("syncing")) {
+      const started = Number(btn.dataset.oskarUltraSyncStarted || Date.now());
+      if (!btn.dataset.oskarUltraSyncStarted) btn.dataset.oskarUltraSyncStarted = String(started);
+      if (Date.now() - started > 25000) {
+        btn.classList.remove("syncing"); btn.disabled = false; btn.dataset.oskarUltraSyncStarted = "";
+        const status = $("syncPopoverStatus"); if (status) status.textContent = "تم إيقاف مؤشر المزامنة العالق. البيانات المحلية محفوظة.";
+      }
+    }
+  }
+  window.addEventListener("click", ev => { if (ev.target.closest("#syncNowBtn")) { const b=$("syncNowBtn"); if(b) b.dataset.oskarUltraSyncStarted = String(Date.now()); } }, true);
+
+  function boot(){
+    bindLogoUpload(); applyStableLogo(true); renderOnly(activePage());
+    setInterval(guardSyncSpinner, 3000);
+    const mo = new MutationObserver(muts => {
+      let needLogo = false;
+      for (const m of muts) {
+        if (m.type === "childList") { needLogo = true; break; }
+        if (m.type === "attributes" && m.target && m.target.matches && m.target.matches("#topShopLogo,#sideShopLogo,#settingLogoPreview,img.invoice-logo,img.ship-report-logo")) { needLogo = true; break; }
+      }
+      if (needLogo) scheduleLogo();
+    });
+    if (document.body) mo.observe(document.body, {childList:true, subtree:true, attributes:true, attributeFilter:["src"]});
+    document.addEventListener("click", () => { bindLogoUpload(); scheduleLogo(); }, true);
+  }
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot, {once:true}); else boot();
 })();
 </script>
 

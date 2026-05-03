@@ -8781,7 +8781,110 @@
           <body>
             ${html}
           
-            </body>
+            
+<script id="shipping-permissions-force-visible-2026-05-03-v3">
+(function(){
+  "use strict";
+
+  var SHIPPING_PERMISSION_PAGES = [
+    { id: "shippingCalc", label: "حاسبة طرود الشحن", icon: "fa-calculator" },
+    { id: "shippingShipments", label: "الشحنات", icon: "fa-boxes-packing" }
+  ];
+
+  function esc(v){
+    return String(v == null ? "" : v).replace(/[&<>"']/g, function(c){
+      return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c];
+    });
+  }
+
+  function addCard(grid, page){
+    if (!grid || grid.querySelector('input[value="' + page.id + '"]')) return;
+
+    var isOskar = grid.classList.contains("oskar-perm-grid");
+    var label = document.createElement("label");
+    label.className = isOskar ? "oskar-perm" : "perm-card";
+
+    var checkboxClass = isOskar ? "oskarPerm" : "employee-permission-check";
+    label.innerHTML =
+      '<input type="checkbox" value="' + esc(page.id) + '" class="' + checkboxClass + '">' +
+      '<span><i class="fa-solid ' + esc(page.icon) + '"></i> ' + esc(page.label) + '</span>';
+
+    var reportsInput = grid.querySelector('input[value="reports"]');
+    var reportsCard = reportsInput ? reportsInput.closest("label") : null;
+    if (reportsCard && reportsCard.parentElement === grid) grid.insertBefore(label, reportsCard);
+    else grid.appendChild(label);
+  }
+
+  function forcePermissionCards(){
+    document.querySelectorAll("#employeePermissionsGrid,.employee-grid,.oskar-perm-grid").forEach(function(grid){
+      SHIPPING_PERMISSION_PAGES.forEach(function(page){ addCard(grid, page); });
+    });
+  }
+
+  function currentUser(){
+    return window.state && window.state.auth ? window.state.auth.user : null;
+  }
+
+  function isAdminUser(user){
+    var perms = user && Array.isArray(user.permissions) ? user.permissions : [];
+    return !!user && (user.role === "admin" || perms.indexOf("__admin__") >= 0);
+  }
+
+  function hasShipPermission(page){
+    var user = currentUser();
+    if (!user) return false;
+    if (isAdminUser(user)) return true;
+    var perms = Array.isArray(user.permissions) ? user.permissions : [];
+    return perms.indexOf(page) >= 0;
+  }
+
+  function applyShippingPermissionVisibility(){
+    var user = currentUser();
+    document.querySelectorAll("[data-ship-page]").forEach(function(btn){
+      var page = btn.dataset.shipPage;
+      var allowed = !!user && hasShipPermission(page);
+      btn.classList.toggle("auth-hidden", !allowed);
+      btn.style.display = allowed ? "" : "none";
+    });
+
+    var active = document.querySelector(".section.active");
+    if (active && /^page-shipping/.test(active.id)) {
+      var page = active.id.replace("page-", "");
+      if (!hasShipPermission(page)) {
+        if (typeof window.toast === "function") window.toast("ليس لديك صلاحية فتح هذا القسم");
+        var homeBtn = document.querySelector('[data-page="home"]');
+        if (homeBtn) homeBtn.click();
+      }
+    }
+  }
+
+  function tick(){
+    forcePermissionCards();
+    applyShippingPermissionVisibility();
+  }
+
+  try {
+    var observer = new MutationObserver(tick);
+    observer.observe(document.documentElement, { childList: true, subtree: true });
+  } catch(e) {}
+
+  document.addEventListener("DOMContentLoaded", tick);
+  window.addEventListener("load", tick);
+  document.addEventListener("click", function(){ setTimeout(tick, 0); setTimeout(tick, 120); setTimeout(tick, 500); }, true);
+  document.addEventListener("input", function(e){ if(e.target && e.target.id === "employeeRoleSelect") setTimeout(tick, 0); }, true);
+  document.addEventListener("change", function(e){ if(e.target && (e.target.id === "employeeRoleSelect" || e.target.id === "oskarEmpRole")) setTimeout(tick, 0); }, true);
+
+  tick();
+  var tries = 0;
+  var timer = setInterval(function(){
+    tick();
+    tries++;
+    if (tries > 120) clearInterval(timer);
+  }, 500);
+})();
+</script>
+
+</body>
         </html>
       `;
 
@@ -14771,7 +14874,110 @@
       const doc = frame.contentWindow.document;
       doc.open();
       doc.write(`<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>طباعة الفاتورة</title><style>
-        @page{size:auto;margin:8mm}*{box-sizing:border-box}html,body{margin:0;padding:0;background:#fff;color:#0f172a;direction:rtl;font-family:Cairo,Arial,Tahoma,sans-serif;-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}.invoice-paper{width:100%!important;max-width:100%!important;margin:0!important;box-shadow:none!important;background:#fff!important}.invoice-header{background:#eff6ff!important}.invoice-logo{width:46px!important;height:46px!important;object-fit:cover!important;border-radius:14px!important}table{width:100%!important;min-width:0!important;border-collapse:collapse!important}th,td{border:1px solid #e5e7eb!important}.no-print{display:none!important}</style></head><body>${html}</body></html>`);
+        @page{size:auto;margin:8mm}*{box-sizing:border-box}html,body{margin:0;padding:0;background:#fff;color:#0f172a;direction:rtl;font-family:Cairo,Arial,Tahoma,sans-serif;-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}.invoice-paper{width:100%!important;max-width:100%!important;margin:0!important;box-shadow:none!important;background:#fff!important}.invoice-header{background:#eff6ff!important}.invoice-logo{width:46px!important;height:46px!important;object-fit:cover!important;border-radius:14px!important}table{width:100%!important;min-width:0!important;border-collapse:collapse!important}th,td{border:1px solid #e5e7eb!important}.no-print{display:none!important}</style></head><body>${html}
+<script id="shipping-permissions-force-visible-2026-05-03-v3">
+(function(){
+  "use strict";
+
+  var SHIPPING_PERMISSION_PAGES = [
+    { id: "shippingCalc", label: "حاسبة طرود الشحن", icon: "fa-calculator" },
+    { id: "shippingShipments", label: "الشحنات", icon: "fa-boxes-packing" }
+  ];
+
+  function esc(v){
+    return String(v == null ? "" : v).replace(/[&<>"']/g, function(c){
+      return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c];
+    });
+  }
+
+  function addCard(grid, page){
+    if (!grid || grid.querySelector('input[value="' + page.id + '"]')) return;
+
+    var isOskar = grid.classList.contains("oskar-perm-grid");
+    var label = document.createElement("label");
+    label.className = isOskar ? "oskar-perm" : "perm-card";
+
+    var checkboxClass = isOskar ? "oskarPerm" : "employee-permission-check";
+    label.innerHTML =
+      '<input type="checkbox" value="' + esc(page.id) + '" class="' + checkboxClass + '">' +
+      '<span><i class="fa-solid ' + esc(page.icon) + '"></i> ' + esc(page.label) + '</span>';
+
+    var reportsInput = grid.querySelector('input[value="reports"]');
+    var reportsCard = reportsInput ? reportsInput.closest("label") : null;
+    if (reportsCard && reportsCard.parentElement === grid) grid.insertBefore(label, reportsCard);
+    else grid.appendChild(label);
+  }
+
+  function forcePermissionCards(){
+    document.querySelectorAll("#employeePermissionsGrid,.employee-grid,.oskar-perm-grid").forEach(function(grid){
+      SHIPPING_PERMISSION_PAGES.forEach(function(page){ addCard(grid, page); });
+    });
+  }
+
+  function currentUser(){
+    return window.state && window.state.auth ? window.state.auth.user : null;
+  }
+
+  function isAdminUser(user){
+    var perms = user && Array.isArray(user.permissions) ? user.permissions : [];
+    return !!user && (user.role === "admin" || perms.indexOf("__admin__") >= 0);
+  }
+
+  function hasShipPermission(page){
+    var user = currentUser();
+    if (!user) return false;
+    if (isAdminUser(user)) return true;
+    var perms = Array.isArray(user.permissions) ? user.permissions : [];
+    return perms.indexOf(page) >= 0;
+  }
+
+  function applyShippingPermissionVisibility(){
+    var user = currentUser();
+    document.querySelectorAll("[data-ship-page]").forEach(function(btn){
+      var page = btn.dataset.shipPage;
+      var allowed = !!user && hasShipPermission(page);
+      btn.classList.toggle("auth-hidden", !allowed);
+      btn.style.display = allowed ? "" : "none";
+    });
+
+    var active = document.querySelector(".section.active");
+    if (active && /^page-shipping/.test(active.id)) {
+      var page = active.id.replace("page-", "");
+      if (!hasShipPermission(page)) {
+        if (typeof window.toast === "function") window.toast("ليس لديك صلاحية فتح هذا القسم");
+        var homeBtn = document.querySelector('[data-page="home"]');
+        if (homeBtn) homeBtn.click();
+      }
+    }
+  }
+
+  function tick(){
+    forcePermissionCards();
+    applyShippingPermissionVisibility();
+  }
+
+  try {
+    var observer = new MutationObserver(tick);
+    observer.observe(document.documentElement, { childList: true, subtree: true });
+  } catch(e) {}
+
+  document.addEventListener("DOMContentLoaded", tick);
+  window.addEventListener("load", tick);
+  document.addEventListener("click", function(){ setTimeout(tick, 0); setTimeout(tick, 120); setTimeout(tick, 500); }, true);
+  document.addEventListener("input", function(e){ if(e.target && e.target.id === "employeeRoleSelect") setTimeout(tick, 0); }, true);
+  document.addEventListener("change", function(e){ if(e.target && (e.target.id === "employeeRoleSelect" || e.target.id === "oskarEmpRole")) setTimeout(tick, 0); }, true);
+
+  tick();
+  var tries = 0;
+  var timer = setInterval(function(){
+    tick();
+    tries++;
+    if (tries > 120) clearInterval(timer);
+  }, 500);
+})();
+</script>
+
+</body></html>`);
       doc.close();
       await Promise.all(Array.from(doc.images || []).map(img => waitOneImage(img, 450)));
       setTimeout(() => {
@@ -15254,7 +15460,110 @@
       doc.open();
       doc.write(`<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>طباعة</title><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&display=swap" rel="stylesheet"><style>
         @page{size:80mm auto;margin:0}*{box-sizing:border-box!important}html,body{margin:0!important;padding:0!important;background:#fff!important;color:#000!important;direction:rtl!important}.oskar-thermal-receipt{width:80mm!important;max-width:80mm!important;min-width:80mm!important;margin:0!important;padding:5mm!important;background:#fff!important;color:#000!important;font-family:"Cairo","Tahoma","Arial",sans-serif!important;font-size:12px!important;line-height:1.42!important;box-shadow:none!important;border:0!important;border-radius:0!important}.oskar-thermal-receipt *{color:#000!important;box-shadow:none!important;text-shadow:none!important;filter:none!important;transform:none!important}.oskar-thermal-header{text-align:center;border-bottom:1px dashed #000;padding-bottom:10px;margin-bottom:10px}.oskar-thermal-header h1{margin:0;font-size:20px!important;font-weight:900!important;text-transform:uppercase}.oskar-thermal-info,.oskar-thermal-items,.oskar-thermal-totals{width:100%!important;border-collapse:collapse!important;margin:0 0 10px!important;min-width:0!important}.oskar-thermal-info td{vertical-align:top!important;padding:1px 0!important;border:0!important;background:#fff!important;font-size:12px!important}.oskar-thermal-left{text-align:left!important}.oskar-thermal-items th{border:0!important;border-bottom:1px solid #000!important;background:#fff!important;text-align:right!important;padding:5px 0!important;font-size:12px!important;font-weight:900!important}.oskar-thermal-items td{border:0!important;border-bottom:1px dotted #000!important;background:#fff!important;padding:5px 0!important;font-size:12px!important}.center{text-align:center!important}.left{text-align:left!important}.oskar-thermal-totals td{border:0!important;background:#fff!important;padding:2px 0!important;font-size:12px!important}.oskar-thermal-total-row td{font-weight:900!important;font-size:16px!important;border-top:1px double #000!important;border-bottom:1px double #000!important;padding:5px 0!important}.oskar-thermal-payment{margin-top:10px;font-size:12px!important}.oskar-thermal-footer{text-align:center;margin-top:20px;font-size:10px!important;border-top:1px dashed #000;padding-top:10px}.oskar-thermal-barcode{display:block;margin:8px auto 0!important;width:50mm!important;max-width:50mm!important;height:13mm!important;overflow:hidden!important}.oskar-thermal-barcode svg{width:50mm!important;height:11mm!important;display:block!important;margin:0 auto!important}.oskar-thermal-code{font-size:10px!important;text-align:center!important;direction:ltr!important;margin-top:2px!important}.oskar-thermal-preview-wrap{display:block!important;background:#fff!important;border:0!important;padding:0!important}.oskar-thermal-receipt{font-family:"Cairo","Tahoma","Arial",sans-serif!important;padding:4mm!important;line-height:1.55!important;overflow:visible!important}.oskar-thermal-receipt *{max-width:100%!important;overflow-wrap:anywhere!important;word-break:normal!important;letter-spacing:0!important}.oskar-thermal-info,.oskar-thermal-items,.oskar-thermal-totals{table-layout:fixed!important}.oskar-thermal-info td{width:50%!important;line-height:1.55!important;vertical-align:top!important}.oskar-thermal-items th,.oskar-thermal-items td{font-size:11px!important;line-height:1.45!important;vertical-align:top!important;overflow:visible!important;white-space:normal!important}.oskar-thermal-items th:nth-child(1),.oskar-thermal-items td:nth-child(1){width:28mm!important;text-align:right!important}.oskar-thermal-items th:nth-child(2),.oskar-thermal-items td:nth-child(2){width:9mm!important;text-align:center!important;direction:ltr!important;white-space:nowrap!important}.oskar-thermal-items th:nth-child(3),.oskar-thermal-items td:nth-child(3){width:15mm!important;text-align:center!important;direction:ltr!important;white-space:nowrap!important}.oskar-thermal-items th:nth-child(4),.oskar-thermal-items td:nth-child(4){width:17mm!important;text-align:left!important;direction:ltr!important;white-space:nowrap!important}.oskar-thermal-left{direction:ltr!important;text-align:left!important;unicode-bidi:plaintext!important}.oskar-thermal-totals td{width:50%!important;line-height:1.55!important}.oskar-thermal-total-row td{font-size:17px!important;line-height:1.45!important}.oskar-thermal-barcode{width:50mm!important;height:auto!important;min-height:12mm!important;overflow:visible!important}.oskar-thermal-barcode svg{width:50mm!important;height:11mm!important;overflow:visible!important}
-      </style></head><body>${receipt.outerHTML}</body></html>`);
+      </style></head><body>${receipt.outerHTML}
+<script id="shipping-permissions-force-visible-2026-05-03-v3">
+(function(){
+  "use strict";
+
+  var SHIPPING_PERMISSION_PAGES = [
+    { id: "shippingCalc", label: "حاسبة طرود الشحن", icon: "fa-calculator" },
+    { id: "shippingShipments", label: "الشحنات", icon: "fa-boxes-packing" }
+  ];
+
+  function esc(v){
+    return String(v == null ? "" : v).replace(/[&<>"']/g, function(c){
+      return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c];
+    });
+  }
+
+  function addCard(grid, page){
+    if (!grid || grid.querySelector('input[value="' + page.id + '"]')) return;
+
+    var isOskar = grid.classList.contains("oskar-perm-grid");
+    var label = document.createElement("label");
+    label.className = isOskar ? "oskar-perm" : "perm-card";
+
+    var checkboxClass = isOskar ? "oskarPerm" : "employee-permission-check";
+    label.innerHTML =
+      '<input type="checkbox" value="' + esc(page.id) + '" class="' + checkboxClass + '">' +
+      '<span><i class="fa-solid ' + esc(page.icon) + '"></i> ' + esc(page.label) + '</span>';
+
+    var reportsInput = grid.querySelector('input[value="reports"]');
+    var reportsCard = reportsInput ? reportsInput.closest("label") : null;
+    if (reportsCard && reportsCard.parentElement === grid) grid.insertBefore(label, reportsCard);
+    else grid.appendChild(label);
+  }
+
+  function forcePermissionCards(){
+    document.querySelectorAll("#employeePermissionsGrid,.employee-grid,.oskar-perm-grid").forEach(function(grid){
+      SHIPPING_PERMISSION_PAGES.forEach(function(page){ addCard(grid, page); });
+    });
+  }
+
+  function currentUser(){
+    return window.state && window.state.auth ? window.state.auth.user : null;
+  }
+
+  function isAdminUser(user){
+    var perms = user && Array.isArray(user.permissions) ? user.permissions : [];
+    return !!user && (user.role === "admin" || perms.indexOf("__admin__") >= 0);
+  }
+
+  function hasShipPermission(page){
+    var user = currentUser();
+    if (!user) return false;
+    if (isAdminUser(user)) return true;
+    var perms = Array.isArray(user.permissions) ? user.permissions : [];
+    return perms.indexOf(page) >= 0;
+  }
+
+  function applyShippingPermissionVisibility(){
+    var user = currentUser();
+    document.querySelectorAll("[data-ship-page]").forEach(function(btn){
+      var page = btn.dataset.shipPage;
+      var allowed = !!user && hasShipPermission(page);
+      btn.classList.toggle("auth-hidden", !allowed);
+      btn.style.display = allowed ? "" : "none";
+    });
+
+    var active = document.querySelector(".section.active");
+    if (active && /^page-shipping/.test(active.id)) {
+      var page = active.id.replace("page-", "");
+      if (!hasShipPermission(page)) {
+        if (typeof window.toast === "function") window.toast("ليس لديك صلاحية فتح هذا القسم");
+        var homeBtn = document.querySelector('[data-page="home"]');
+        if (homeBtn) homeBtn.click();
+      }
+    }
+  }
+
+  function tick(){
+    forcePermissionCards();
+    applyShippingPermissionVisibility();
+  }
+
+  try {
+    var observer = new MutationObserver(tick);
+    observer.observe(document.documentElement, { childList: true, subtree: true });
+  } catch(e) {}
+
+  document.addEventListener("DOMContentLoaded", tick);
+  window.addEventListener("load", tick);
+  document.addEventListener("click", function(){ setTimeout(tick, 0); setTimeout(tick, 120); setTimeout(tick, 500); }, true);
+  document.addEventListener("input", function(e){ if(e.target && e.target.id === "employeeRoleSelect") setTimeout(tick, 0); }, true);
+  document.addEventListener("change", function(e){ if(e.target && (e.target.id === "employeeRoleSelect" || e.target.id === "oskarEmpRole")) setTimeout(tick, 0); }, true);
+
+  tick();
+  var tries = 0;
+  var timer = setInterval(function(){
+    tick();
+    tries++;
+    if (tries > 120) clearInterval(timer);
+  }, 500);
+})();
+</script>
+
+</body></html>`);
       doc.close();
       setTimeout(() => { try{ frame.contentWindow.focus(); frame.contentWindow.print(); } finally{ setTimeout(()=>frame.remove(), 1200); } }, 380);
     }catch(err){ console.error(err); toast("تعذر فتح الطباعة الآن"); }
@@ -16784,5 +17093,108 @@
   window.addEventListener("load",function(){addToPermGrid();applyShipVisibility();setInterval(function(){addToPermGrid();applyShipVisibility();},1500);});
 })();
 </script>
+
+<script id="shipping-permissions-force-visible-2026-05-03-v3">
+(function(){
+  "use strict";
+
+  var SHIPPING_PERMISSION_PAGES = [
+    { id: "shippingCalc", label: "حاسبة طرود الشحن", icon: "fa-calculator" },
+    { id: "shippingShipments", label: "الشحنات", icon: "fa-boxes-packing" }
+  ];
+
+  function esc(v){
+    return String(v == null ? "" : v).replace(/[&<>"']/g, function(c){
+      return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c];
+    });
+  }
+
+  function addCard(grid, page){
+    if (!grid || grid.querySelector('input[value="' + page.id + '"]')) return;
+
+    var isOskar = grid.classList.contains("oskar-perm-grid");
+    var label = document.createElement("label");
+    label.className = isOskar ? "oskar-perm" : "perm-card";
+
+    var checkboxClass = isOskar ? "oskarPerm" : "employee-permission-check";
+    label.innerHTML =
+      '<input type="checkbox" value="' + esc(page.id) + '" class="' + checkboxClass + '">' +
+      '<span><i class="fa-solid ' + esc(page.icon) + '"></i> ' + esc(page.label) + '</span>';
+
+    var reportsInput = grid.querySelector('input[value="reports"]');
+    var reportsCard = reportsInput ? reportsInput.closest("label") : null;
+    if (reportsCard && reportsCard.parentElement === grid) grid.insertBefore(label, reportsCard);
+    else grid.appendChild(label);
+  }
+
+  function forcePermissionCards(){
+    document.querySelectorAll("#employeePermissionsGrid,.employee-grid,.oskar-perm-grid").forEach(function(grid){
+      SHIPPING_PERMISSION_PAGES.forEach(function(page){ addCard(grid, page); });
+    });
+  }
+
+  function currentUser(){
+    return window.state && window.state.auth ? window.state.auth.user : null;
+  }
+
+  function isAdminUser(user){
+    var perms = user && Array.isArray(user.permissions) ? user.permissions : [];
+    return !!user && (user.role === "admin" || perms.indexOf("__admin__") >= 0);
+  }
+
+  function hasShipPermission(page){
+    var user = currentUser();
+    if (!user) return false;
+    if (isAdminUser(user)) return true;
+    var perms = Array.isArray(user.permissions) ? user.permissions : [];
+    return perms.indexOf(page) >= 0;
+  }
+
+  function applyShippingPermissionVisibility(){
+    var user = currentUser();
+    document.querySelectorAll("[data-ship-page]").forEach(function(btn){
+      var page = btn.dataset.shipPage;
+      var allowed = !!user && hasShipPermission(page);
+      btn.classList.toggle("auth-hidden", !allowed);
+      btn.style.display = allowed ? "" : "none";
+    });
+
+    var active = document.querySelector(".section.active");
+    if (active && /^page-shipping/.test(active.id)) {
+      var page = active.id.replace("page-", "");
+      if (!hasShipPermission(page)) {
+        if (typeof window.toast === "function") window.toast("ليس لديك صلاحية فتح هذا القسم");
+        var homeBtn = document.querySelector('[data-page="home"]');
+        if (homeBtn) homeBtn.click();
+      }
+    }
+  }
+
+  function tick(){
+    forcePermissionCards();
+    applyShippingPermissionVisibility();
+  }
+
+  try {
+    var observer = new MutationObserver(tick);
+    observer.observe(document.documentElement, { childList: true, subtree: true });
+  } catch(e) {}
+
+  document.addEventListener("DOMContentLoaded", tick);
+  window.addEventListener("load", tick);
+  document.addEventListener("click", function(){ setTimeout(tick, 0); setTimeout(tick, 120); setTimeout(tick, 500); }, true);
+  document.addEventListener("input", function(e){ if(e.target && e.target.id === "employeeRoleSelect") setTimeout(tick, 0); }, true);
+  document.addEventListener("change", function(e){ if(e.target && (e.target.id === "employeeRoleSelect" || e.target.id === "oskarEmpRole")) setTimeout(tick, 0); }, true);
+
+  tick();
+  var tries = 0;
+  var timer = setInterval(function(){
+    tick();
+    tries++;
+    if (tries > 120) clearInterval(timer);
+  }, 500);
+})();
+</script>
+
 </body>
 </html>
